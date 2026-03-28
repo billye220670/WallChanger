@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm create:*)",
+      "Bash(pip install:*)",
+      "Bash(npm install:*)",
+      "Bash(timeout /t 5 /nobreak)",
+      "Bash(python:*)",
+      "Bash(pip show:*)",
+      "Bash(for env:*)",
+      "Bash(do echo:*)",
+      "Bash(conda run:*)",
+      "Bash(done)",
+      "Bash(where python:*)",
+      "Bash(nvidia-smi)"
+    ]
+  }
+}
