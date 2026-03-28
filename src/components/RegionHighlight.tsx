@@ -3,12 +3,13 @@ import { useStore } from '../store'
 interface RegionHighlightProps {
   maskId: number | null
   variant?: 'hover' | 'shimmer'
+  active?: boolean
 }
 
-export function RegionHighlight({ maskId, variant = 'hover' }: RegionHighlightProps) {
+export function RegionHighlight({ maskId, variant = 'hover', active = false }: RegionHighlightProps) {
   const { masks, processingRegions } = useStore()
 
-  if (!maskId) return null
+  if (maskId === null) return null
 
   const mask = masks.find((m) => m.id === maskId)
   if (!mask) return null
@@ -16,11 +17,11 @@ export function RegionHighlight({ maskId, variant = 'hover' }: RegionHighlightPr
   const [r, g, b] = mask.color
   const color = `rgb(${r}, ${g}, ${b})`
 
-  if (variant === 'shimmer' && processingRegions.has(maskId)) {
+  if (variant === 'shimmer' && (active || processingRegions.has(maskId))) {
     return (
       <div
         className="absolute inset-0 pointer-events-none overflow-hidden"
-        style={{ borderRadius: 'inherit' }}
+        style={{ borderRadius: 'inherit', zIndex: 25 }}
       >
         <div
           className="absolute inset-0 shimmer-overlay"

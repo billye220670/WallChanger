@@ -6,7 +6,7 @@ import { MaterialDrawer } from '../components/MaterialDrawer'
 import { DragPreview } from '../components/DragPreview'
 import { DebugPanel, type DebugFlags } from '../components/DebugPanel'
 import { applyMaterial as apiApplyMaterial, setBackendUrl } from '../utils/api'
-import { getMaskAtPixel, compositeRegion, precomputeMaskOutlines, drawMaskOutline } from '../utils/canvas'
+import { getMaskAtPixel, compositeRegion, precomputeMaskOutlines, drawMaskOutline, drawMaskShimmer } from '../utils/canvas'
 import { touchToImageCoords } from '../utils/coords'
 
 export function EditorScreen() {
@@ -39,7 +39,7 @@ export function EditorScreen() {
   const [dragPos, setDragPos]       = useState({ x: 0, y: 0 })
   const [canvasReady, setCanvasReady] = useState(false)
   const [debugFlags, setDebugFlags]  = useState<DebugFlags>({
-    showClean: false, showRawMask: false, showRefinedMask: false, hoverHighlight: false,
+    showClean: false, showRawMask: false, showRefinedMask: false, hoverHighlight: false, hoverFill: false,
   })
 
   // ── Contain-box sizing ────────────────────────────────────────────────────
@@ -78,6 +78,9 @@ export function EditorScreen() {
     const container = imageContainerRef.current
     if (!overlay || !container) return
 
+    // hoverFill mode: rAF loop owns the overlay canvas — don't touch it here
+    if (debugFlags.hoverFill) return
+
     const { width: w, height: h } = container.getBoundingClientRect()
     overlay.width  = Math.round(w)
     overlay.height = Math.round(h)
@@ -87,13 +90,45 @@ export function EditorScreen() {
       return
     }
     drawMaskOutline(hoveredMaskId, overlay)
-  }, [hoveredMaskId, draggingMaterial, debugFlags.hoverHighlight, canvasReady])
+  }, [hoveredMaskId, draggingMaterial, debugFlags.hoverHighlight, debugFlags.hoverFill, canvasReady])
 
-  // ── Hover highlight – mouse tracking when hoverHighlight debug flag is on ──
+  // ── Hover fill shimmer – rAF loop when hoverFill flag is on ───────────────
+  useEffect(() => {
+    // When hoverFill is off or no mask is hovered, do nothing —
+    // the outline effect owns the canvas in that case.
+    if (!debugFlags.hoverFill || hoveredMaskId === null) return
+
+    const hoveredMask = masks.find(m => m.id === hoveredMaskId)
+    if (!hoveredMask) return
+
+    let animId: number
+    const animate = (timestamp: number) => {
+      const overlay   = overlayCanvasRef.current
+      const container = imageContainerRef.current
+      if (!overlay || !container) return
+      const { width: w, height: h } = container.getBoundingClientRect()
+      if (overlay.width !== Math.round(w) || overlay.height !== Math.round(h)) {
+        overlay.width  = Math.round(w)
+        overlay.height = Math.round(h)
+      }
+      drawMaskShimmer(hoveredMaskId, overlay, timestamp, hoveredMask.color)
+      animId = requestAnimationFrame(animate)
+    }
+    animId = requestAnimationFrame(animate)
+    return () => {
+      cancelAnimationFrame(animId)
+      // Clear canvas so the outline effect can take over cleanly
+      const overlay = overlayCanvasRef.current
+      overlay?.getContext('2d')?.clearRect(0, 0, overlay.width, overlay.height)
+    }
+  }, [debugFlags.hoverFill, hoveredMaskId, masks])
+
+  // ── Hover highlight – mouse tracking when hoverHighlight or hoverFill debug flag is on ──
   useEffect(() => {
     const container = imageContainerRef.current
-    if (!container || !debugFlags.hoverHighlight) {
-      if (!debugFlags.hoverHighlight) setHoveredMaskId(null)
+    const needsHover = debugFlags.hoverHighlight || debugFlags.hoverFill
+    if (!container || !needsHover) {
+      if (!needsHover) setHoveredMaskId(null)
       return
     }
 
@@ -112,7 +147,7 @@ export function EditorScreen() {
       container.removeEventListener('mousemove', handleMouseMove)
       container.removeEventListener('mouseleave', handleMouseLeave)
     }
-  }, [debugFlags.hoverHighlight, dimensions, masks])
+  }, [debugFlags.hoverHighlight, debugFlags.hoverFill, dimensions, masks])
 
   // ── Drag handlers ─────────────────────────────────────────────────────────
   const handleDragStart = useCallback((material: Material, x: number, y: number) => {

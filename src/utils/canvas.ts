@@ -6,7 +6,7 @@ let offscreenCtx: CanvasRenderingContext2D | null = null
 // ── Pre-computed edge SDF per mask (keyed by mask ID) ───────────────────────
 // sdf[i] = distance (in mask-resolution pixels) from pixel i to nearest edge;
 // 255 = "far" sentinel (no glow rendered).
-interface SDFData { sdf: Uint8Array; w: number; h: number }
+interface SDFData { sdf: Uint8Array; inLargest: Uint8Array; w: number; h: number }
 const maskSDFs = new Map<number, SDFData>()
 
 const MAX_GLOW_DIST = 20   // glow radius in mask-resolution pixels
@@ -153,7 +153,7 @@ export function precomputeMaskOutlines(masks: MaskInfo[]): void {
 
     // ── 2c: Build edge SDF from the largest component ───────────────────────
     const sdf = buildEdgeSDF(inLargest, W, H, MAX_GLOW_DIST)
-    maskSDFs.set(masks[mi].id, { sdf, w: W, h: H })
+    maskSDFs.set(masks[mi].id, { sdf, inLargest: inLargest.slice(), w: W, h: H })
   }
 
   // Save assignment for pixel-perfect hit-testing (same data, zero extra cost)
@@ -236,6 +236,66 @@ export function drawMaskOutline(
       od[di + 1] = g
       od[di + 2] = b
       od[di + 3] = Math.round(glow * 255)
+    }
+  }
+
+  ctx.putImageData(outData, 0, 0)
+}
+
+/**
+ * Draws a sweeping shimmer effect clipped to the mask region pixels.
+ * Designed to simulate a "loading" state when a material is being applied.
+ * Call repeatedly in a requestAnimationFrame loop.
+ */
+export function drawMaskShimmer(
+  maskId: number | null,
+  shimmerCanvas: HTMLCanvasElement,
+  timestamp: number,
+  color: [number, number, number]
+): void {
+  const ctx = shimmerCanvas.getContext('2d')!
+  ctx.clearRect(0, 0, shimmerCanvas.width, shimmerCanvas.height)
+  if (maskId === null) return
+
+  const data = maskSDFs.get(maskId)
+  if (!data) return
+
+  const { inLargest, w: sW, h: sH } = data
+  const dW = shimmerCanvas.width
+  const dH = shimmerCanvas.height
+  if (!dW || !dH) return
+
+  const scaleX = sW / dW
+  const scaleY = sH / dH
+
+  const PERIOD = 1500
+  const phase  = (timestamp % PERIOD) / PERIOD
+  // Sweep enters from left (-30%) and exits right (130%) so edges animate smoothly
+  const sweepX = (phase * 1.6 - 0.3) * dW
+  const BAND   = dW * 0.15    // half-width of the highlight band
+
+  const [cr, cg, cb] = color
+
+  const outData = ctx.createImageData(dW, dH)
+  const od = outData.data
+
+  for (let dy = 0; dy < dH; dy++) {
+    for (let dx = 0; dx < dW; dx++) {
+      const sx = Math.min(Math.round(dx * scaleX), sW - 1)
+      const sy = Math.min(Math.round(dy * scaleY), sH - 1)
+      if (!inLargest[sy * sW + sx]) continue   // pixel not in this mask region
+
+      const di = (dy * dW + dx) * 4
+      const t  = Math.max(0, 1 - Math.abs(dx - sweepX) / BAND)
+      const shimmer = t * t    // quadratic falloff
+
+      // Base: mask color at ~35% opacity; peak: blends toward white
+      const alpha = 0.35 + shimmer * 0.5
+      const blend = shimmer * 0.75
+      od[di]     = Math.round(cr * (1 - blend) + 255 * blend)
+      od[di + 1] = Math.round(cg * (1 - blend) + 255 * blend)
+      od[di + 2] = Math.round(cb * (1 - blend) + 255 * blend)
+      od[di + 3] = Math.round(alpha * 255)
     }
   }
 

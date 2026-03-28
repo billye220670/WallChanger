@@ -7,6 +7,7 @@ export interface DebugFlags {
   showRawMask: boolean
   showRefinedMask: boolean
   hoverHighlight: boolean
+  hoverFill: boolean
 }
 
 interface DebugPanelProps {
@@ -21,6 +22,7 @@ const FLAG_OPTIONS: { key: keyof DebugFlags; label: string }[] = [
   { key: 'showRawMask',     label: 'show raw mask' },
   { key: 'showRefinedMask', label: 'show refined mask' },
   { key: 'hoverHighlight',  label: 'hover highlight' },
+  { key: 'hoverFill',       label: 'hover fill' },
 ]
 
 const PROMPT_FIELDS: { key: keyof DebugPrompts; label: string }[] = [

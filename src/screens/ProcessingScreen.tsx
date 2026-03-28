@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useStore } from '../store'
 import { enhanceImage, processMasks, setBackendUrl } from '../utils/api'
+import { remapMaskColors } from '../utils/remapMaskColors'
 
 const STEPS = [
   '增强原图',
@@ -71,7 +72,8 @@ export function ProcessingScreen() {
         const result = await processMasks(enh.enhancedImage, debugPrompts.clean, debugPrompts.refine)
         if (signal.ignore) return
         setProcessingStep(4)
-        setMasks(result.refinedMask, result.masks)
+        const remapped = await remapMaskColors(result.refinedMask, result.masks)
+        setMasks(remapped.refinedMask, remapped.masks)
         setTimeout(() => setPhase('editing'), 300)
       } catch (err) {
         if (signal.ignore) return
