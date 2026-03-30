@@ -14,7 +14,12 @@ interface ImageCanvasProps {
 export const ImageCanvas = forwardRef<ImageCanvasHandle, ImageCanvasProps>(
   function ImageCanvas({ onReady }, ref) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
-    const { originalImage, refinedMask, compositeImage, dimensions } = useStore()
+    const { originalImage, rawMask, compositeImage, dimensions } = useStore()
+
+    // Keep a ref to compositeImage so Effect 1 can read the latest value
+    // without needing it in the dependency array (avoids re-running mask init)
+    const compositeImageRef = useRef(compositeImage)
+    useEffect(() => { compositeImageRef.current = compositeImage }, [compositeImage])
 
     useImperativeHandle(ref, () => ({
       getCanvas: () => canvasRef.current,
@@ -38,13 +43,24 @@ export const ImageCanvas = forwardRef<ImageCanvasHandle, ImageCanvasProps>(
       img.onload = async () => {
         ctx.drawImage(img, 0, 0, width, height)
         initOffscreenCanvas(width, height)
-        if (refinedMask) {
-          await loadMaskIntoOffscreen(refinedMask)
+        if (rawMask) {
+          await loadMaskIntoOffscreen(rawMask)
+        }
+        // If a composite already exists (e.g. Effect 1 re-ran after compositing),
+        // restore it on top so the enhanced image doesn't cover the applied material.
+        const existing = compositeImageRef.current
+        if (existing) {
+          await new Promise<void>(resolve => {
+            const compImg = new Image()
+            compImg.onload = () => { ctx.drawImage(compImg, 0, 0, width, height); resolve() }
+            compImg.onerror = () => resolve()
+            compImg.src = `data:image/png;base64,${existing}`
+          })
         }
         onReady()
       }
       img.src = `data:image/jpeg;base64,${originalImage}`
-    }, [originalImage])
+    }, [originalImage, rawMask])
 
     useEffect(() => {
       if (!compositeImage || !canvasRef.current) return

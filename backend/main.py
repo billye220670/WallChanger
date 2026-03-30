@@ -87,13 +87,13 @@ def download_url(url: str) -> bytes:
 
 def call_flux(prompt: str, image_uris: list[str]) -> Image.Image:
     """
-    Call Flux Klein 4B and return a PIL Image.
+    Call Flux Klein 9B and return a PIL Image.
     fal_client reads FAL_KEY from the environment automatically.
     No image_size passed — fal auto-uses input image dimensions.
     """
     print(f"[flux] calling fal API  prompt='{prompt[:60]}...'")
     result = fal_client.subscribe(
-        "fal-ai/flux-2/klein/4b/edit/lora",
+        "fal-ai/flux-2/klein/9b/edit/lora",
         arguments={
             "prompt": prompt,
             "image_urls": image_uris,
@@ -105,6 +105,27 @@ def call_flux(prompt: str, image_uris: list[str]) -> Image.Image:
     raw = download_url(image_url)
     img = Image.open(io.BytesIO(raw))
     print(f"[flux] received {img.size} mode={img.mode}")
+    return img
+
+
+def call_seedream(prompt: str, image_uris: list[str]) -> Image.Image:
+    """
+    Call Seedream v5 lite and return a PIL Image.
+    fal_client reads FAL_KEY from the environment automatically.
+    """
+    print(f"[seedream] calling fal API  prompt='{prompt[:60]}...'")
+    result = fal_client.subscribe(
+        "fal-ai/bytedance/seedream/v5/lite/edit",
+        arguments={
+            "prompt": prompt,
+            "image_urls": image_uris,
+            "num_images": 1,
+        },
+    )
+    image_url = result["images"][0]["url"]
+    raw = download_url(image_url)
+    img = Image.open(io.BytesIO(raw))
+    print(f"[seedream] received {img.size} mode={img.mode}")
     return img
 
 
@@ -124,7 +145,7 @@ class ProcessUploadRequest(BaseModel):
 class ProcessMasksRequest(BaseModel):
     enhancedImage: str  # raw base64 JPEG returned by /enhance
     promptClean: str = "empty room"
-    promptRefine: str = "refine the mask, the connection between different color should have no gap"
+    promptRefine: str = "Remove all black outlines and black boundary lines between color regions. Make each colored area fill seamlessly to their edges without any black gaps, borders, or outlines. The result should have clean, sharp color boundaries where colors meet directly with no black separation lines."
 
 class MaskInfo(BaseModel):
     id: int
@@ -171,7 +192,7 @@ def enhance(req: ProcessUploadRequest):
         original = original.resize((req.width, req.height), Image.LANCZOS)
     print(f"[enhance] input size={original.size} mode={original.mode}")
 
-    blurred = original.filter(ImageFilter.GaussianBlur(radius=1))
+    blurred = original.filter(ImageFilter.GaussianBlur(radius=0.5))
     enhanced = call_flux(req.promptEnhance, [pil_to_data_uri(blurred)])
     enhanced.save(DEBUG_DIR / "enhanced.png")
     print(f"[enhance] done size={enhanced.size}")
@@ -185,8 +206,8 @@ def process_masks(req: ProcessMasksRequest):
     enhanced = base64_to_image(req.enhancedImage)
     print(f"[process-masks] input size={enhanced.size}")
 
-    # Step 2: Flux clean
-    cleaned = call_flux(req.promptClean, [pil_to_data_uri(enhanced)])
+    # Step 2: Seedream clean
+    cleaned = call_seedream(req.promptClean, [pil_to_data_uri(enhanced)])
     cleaned.save(DEBUG_DIR / "cleaned.png")
     print(f"[process-masks] cleaned size={cleaned.size}")
 
@@ -205,13 +226,13 @@ def process_masks(req: ProcessMasksRequest):
     mask_img = base64_to_image(seg["mask_only_b64"])
     mask_img.save(DEBUG_DIR / "mask_raw.png")
 
-    # Step 4: Blur mask + Flux refine
-    blurred_mask = mask_img.filter(ImageFilter.GaussianBlur(radius=3))
-    refined = call_flux(req.promptRefine, [pil_to_data_uri(blurred_mask)])
+    # Step 4: Seedream refine (no blur preprocessing)
+    refined = call_seedream(req.promptRefine, [pil_to_data_uri(mask_img)])
     refined.save(DEBUG_DIR / "mask_refined.png")
 
     return {
         "refinedMask": image_to_base64(refined, "PNG"),
+        "rawMask": image_to_base64(mask_img, "PNG"),
         "masks": masks,
     }
 
@@ -240,13 +261,15 @@ def apply_material(req: ApplyMaterialRequest):
         [pil_to_data_uri(original), pil_to_data_uri(material)],
     )
 
+    result_img.save(DEBUG_DIR / "apply_material_result.png")
+
     return {"resultImage": image_to_base64(result_img, "PNG")}
 
 
 @app.post("/finalize")
 def finalize(req: FinalizeRequest):
     composite = base64_to_image(req.compositeImage)
-    blurred = composite.filter(ImageFilter.GaussianBlur(radius=3))
+    blurred = composite.filter(ImageFilter.GaussianBlur(radius=1))
 
     final_img = call_flux(req.promptFinalize, [pil_to_data_uri(blurred)])
 

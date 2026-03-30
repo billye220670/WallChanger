@@ -73,7 +73,7 @@ export function ProcessingScreen() {
         if (signal.ignore) return
         setProcessingStep(4)
         const remapped = await remapMaskColors(result.refinedMask, result.masks)
-        setMasks(remapped.refinedMask, remapped.masks)
+        setMasks(remapped.refinedMask, result.rawMask, remapped.masks)
         setTimeout(() => setPhase('editing'), 300)
       } catch (err) {
         if (signal.ignore) return

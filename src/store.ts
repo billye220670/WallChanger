@@ -5,7 +5,7 @@ import { DEFAULT_PROMPTS } from './types'
 interface AppStore extends AppState {
   setPhase: (phase: Phase) => void
   setOriginalImage: (image: string, width: number, height: number) => void
-  setMasks: (refinedMask: string, masks: MaskInfo[]) => void
+  setMasks: (refinedMask: string, rawMask: string, masks: MaskInfo[]) => void
   setProcessingStep: (step: 0 | 1 | 2 | 3 | 4) => void
   addProcessingRegion: (maskId: number) => void
   removeProcessingRegion: (maskId: number) => void
@@ -34,6 +34,7 @@ const initialState: AppState = {
   originalImage: null,
   dimensions: { width: 0, height: 0 },
   refinedMask: null,
+  rawMask: null,
   masks: [],
   compositeImage: null,
   finalImage: null,
@@ -54,9 +55,14 @@ export const useStore = create<AppStore>((set, get) => ({
   setOriginalImage: (image, width, height) => set({
     originalImage: image,
     dimensions: { width, height },
+    // Clear composite/final when a new image is set so stale results
+    // don't cover the fresh canvas in ImageCanvas Effect 1.
+    compositeImage: null,
+    finalImage: null,
+    appliedRegions: new Map<number, string>(),
   }),
 
-  setMasks: (refinedMask, masks) => set({ refinedMask, masks }),
+  setMasks: (refinedMask, rawMask, masks) => set({ refinedMask, rawMask, masks }),
 
   setProcessingStep: (processingStep) => set({ processingStep }),
 

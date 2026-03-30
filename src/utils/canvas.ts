@@ -302,6 +302,64 @@ export function drawMaskShimmer(
   ctx.putImageData(outData, 0, 0)
 }
 
+/**
+ * Draws a grayscale shimmer for all currently-processing mask regions.
+ * Pass all active maskIds so they are composited in a single putImageData pass.
+ * Call repeatedly in a requestAnimationFrame loop while processingRegions is non-empty.
+ */
+export function drawProcessingShimmer(
+  maskIds: number[],
+  shimmerCanvas: HTMLCanvasElement,
+  timestamp: number,
+): void {
+  const ctx = shimmerCanvas.getContext('2d')!
+  ctx.clearRect(0, 0, shimmerCanvas.width, shimmerCanvas.height)
+
+  const dW = shimmerCanvas.width
+  const dH = shimmerCanvas.height
+  if (!dW || !dH || maskIds.length === 0) return
+
+  const PERIOD = 1500
+  const phase  = (timestamp % PERIOD) / PERIOD
+  const sweepX = (phase * 1.6 - 0.3) * dW
+  const BAND   = dW * 0.15
+
+  const outData = ctx.createImageData(dW, dH)
+  const od = outData.data
+
+  for (const maskId of maskIds) {
+    const data = maskSDFs.get(maskId)
+    if (!data) continue
+
+    const { inLargest, w: sW, h: sH } = data
+    const scaleX = sW / dW
+    const scaleY = sH / dH
+
+    for (let dy = 0; dy < dH; dy++) {
+      for (let dx = 0; dx < dW; dx++) {
+        const sx = Math.min(Math.round(dx * scaleX), sW - 1)
+        const sy = Math.min(Math.round(dy * scaleY), sH - 1)
+        if (!inLargest[sy * sW + sx]) continue
+
+        const di = (dy * dW + dx) * 4
+        const t  = Math.max(0, 1 - Math.abs(dx - sweepX) / BAND)
+        const shimmer = t * t    // quadratic falloff
+
+        // Grayscale: mid-gray base, sweeps toward white
+        const brightness = Math.round(130 + shimmer * 125)  // 130 → 255
+        const alpha      = 0.4 + shimmer * 0.45
+
+        od[di]     = brightness
+        od[di + 1] = brightness
+        od[di + 2] = brightness
+        od[di + 3] = Math.round(alpha * 255)
+      }
+    }
+  }
+
+  ctx.putImageData(outData, 0, 0)
+}
+
 export function initOffscreenCanvas(width: number, height: number) {
   offscreenCanvas = document.createElement('canvas')
   offscreenCanvas.width = width
@@ -376,7 +434,8 @@ export function compositeRegion(
   resultBase64: string,
   targetColor: [number, number, number],
   width: number,
-  height: number
+  height: number,
+  maskId?: number
 ): Promise<void> {
   return new Promise((resolve) => {
     if (!offscreenCtx) {
@@ -395,25 +454,49 @@ export function compositeRegion(
       const baseCtx = baseCanvas.getContext('2d', { willReadFrequently: true })!
       const baseData = baseCtx.getImageData(0, 0, width, height)
       const resultData = tempCtx.getImageData(0, 0, width, height)
-      const maskData = offscreenCtx!.getImageData(0, 0, width, height)
 
-      const [tr, tg, tb] = targetColor
-      const tolerance = 10
+      // Prefer the pre-computed inLargest bitmap (gap-free largest connected
+      // component) over raw colour matching. Fall back to colour matching only
+      // when maskId is not supplied or the SDF entry is missing.
+      const sdfData = maskId !== undefined ? maskSDFs.get(maskId) : undefined
 
-      for (let i = 0; i < maskData.data.length; i += 4) {
-        const mr = maskData.data[i]
-        const mg = maskData.data[i + 1]
-        const mb = maskData.data[i + 2]
-
-        if (
-          Math.abs(mr - tr) <= tolerance &&
-          Math.abs(mg - tg) <= tolerance &&
-          Math.abs(mb - tb) <= tolerance
-        ) {
-          baseData.data[i] = resultData.data[i]
-          baseData.data[i + 1] = resultData.data[i + 1]
-          baseData.data[i + 2] = resultData.data[i + 2]
-          baseData.data[i + 3] = resultData.data[i + 3]
+      if (sdfData) {
+        const { inLargest, w: sW, h: sH } = sdfData
+        // inLargest is at mask/SDF resolution (sW × sH); base canvas is at
+        // (width × height). They should be identical because initOffscreenCanvas
+        // is called with the original image dimensions, but guard with scaling
+        // in case they ever differ.
+        for (let py = 0; py < height; py++) {
+          for (let px = 0; px < width; px++) {
+            const sx = Math.min(Math.round(px * sW / width), sW - 1)
+            const sy = Math.min(Math.round(py * sH / height), sH - 1)
+            if (!inLargest[sy * sW + sx]) continue
+            const i = (py * width + px) * 4
+            baseData.data[i]     = resultData.data[i]
+            baseData.data[i + 1] = resultData.data[i + 1]
+            baseData.data[i + 2] = resultData.data[i + 2]
+            baseData.data[i + 3] = resultData.data[i + 3]
+          }
+        }
+      } else {
+        // Fallback: colour-match against the raw mask image
+        const maskData = offscreenCtx!.getImageData(0, 0, width, height)
+        const [tr, tg, tb] = targetColor
+        const tolerance = 10
+        for (let i = 0; i < maskData.data.length; i += 4) {
+          const mr = maskData.data[i]
+          const mg = maskData.data[i + 1]
+          const mb = maskData.data[i + 2]
+          if (
+            Math.abs(mr - tr) <= tolerance &&
+            Math.abs(mg - tg) <= tolerance &&
+            Math.abs(mb - tb) <= tolerance
+          ) {
+            baseData.data[i]     = resultData.data[i]
+            baseData.data[i + 1] = resultData.data[i + 1]
+            baseData.data[i + 2] = resultData.data[i + 2]
+            baseData.data[i + 3] = resultData.data[i + 3]
+          }
         }
       }
 

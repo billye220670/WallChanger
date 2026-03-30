@@ -23,7 +23,7 @@ export interface DebugPrompts {
 export const DEFAULT_PROMPTS: DebugPrompts = {
   enhance:       'Realistic render',
   clean:         'empty room',
-  refine:        'refine the mask, the connection between different color should have no gap',
+  refine:        'Remove all black outlines and black boundary lines between color regions. Make each colored area fill seamlessly to their edges without any black gaps, borders, or outlines. The result should have clean, sharp color boundaries where colors meet directly with no black separation lines.',
   applyMaterial: 'based on image 2, change all wall material in image 1.',
   finalize:      'realistic render',
 }
@@ -35,6 +35,7 @@ export interface AppState {
   originalImage: string | null
   dimensions: { width: number; height: number }
   refinedMask: string | null
+  rawMask: string | null
   masks: MaskInfo[]
   compositeImage: string | null
   finalImage: string | null

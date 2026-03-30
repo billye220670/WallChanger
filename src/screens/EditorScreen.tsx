@@ -6,7 +6,7 @@ import { MaterialDrawer } from '../components/MaterialDrawer'
 import { DragPreview } from '../components/DragPreview'
 import { DebugPanel, type DebugFlags } from '../components/DebugPanel'
 import { applyMaterial as apiApplyMaterial, setBackendUrl } from '../utils/api'
-import { getMaskAtPixel, compositeRegion, precomputeMaskOutlines, drawMaskOutline, drawMaskShimmer } from '../utils/canvas'
+import { getMaskAtPixel, compositeRegion, precomputeMaskOutlines, drawMaskOutline, drawMaskShimmer, drawProcessingShimmer } from '../utils/canvas'
 import { touchToImageCoords } from '../utils/coords'
 
 export function EditorScreen() {
@@ -31,9 +31,10 @@ export function EditorScreen() {
   } = useStore()
 
   const canvasRef        = useRef<ImageCanvasHandle>(null)
-  const outerRef         = useRef<HTMLDivElement>(null)   // full image area
-  const imageContainerRef = useRef<HTMLDivElement>(null)  // contain-sized box ← all coord math uses this
+  const outerRef         = useRef<HTMLDivElement>(null)
+  const imageContainerRef = useRef<HTMLDivElement>(null)
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null)
+  const processingCanvasRef = useRef<HTMLCanvasElement>(null)
 
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [dragPos, setDragPos]       = useState({ x: 0, y: 0 })
@@ -149,6 +150,36 @@ export function EditorScreen() {
     }
   }, [debugFlags.hoverHighlight, debugFlags.hoverFill, dimensions, masks])
 
+  // ── Processing shimmer – grayscale rAF loop per processing region ──────────
+  useEffect(() => {
+    const ids = Array.from(processingRegions)
+    if (ids.length === 0) {
+      const pc = processingCanvasRef.current
+      pc?.getContext('2d')?.clearRect(0, 0, pc.width, pc.height)
+      return
+    }
+
+    let animId: number
+    const animate = (timestamp: number) => {
+      const pc        = processingCanvasRef.current
+      const container = imageContainerRef.current
+      if (!pc || !container) return
+      const { width: w, height: h } = container.getBoundingClientRect()
+      if (pc.width !== Math.round(w) || pc.height !== Math.round(h)) {
+        pc.width  = Math.round(w)
+        pc.height = Math.round(h)
+      }
+      drawProcessingShimmer(ids, pc, timestamp)
+      animId = requestAnimationFrame(animate)
+    }
+    animId = requestAnimationFrame(animate)
+    return () => {
+      cancelAnimationFrame(animId)
+      const pc = processingCanvasRef.current
+      pc?.getContext('2d')?.clearRect(0, 0, pc.width, pc.height)
+    }
+  }, [processingRegions])
+
   // ── Drag handlers ─────────────────────────────────────────────────────────
   const handleDragStart = useCallback((material: Material, x: number, y: number) => {
     setBackendUrl(backendUrl)
@@ -189,23 +220,21 @@ export function EditorScreen() {
     if (!mask) { setHoveredMaskId(null); return }
 
     setHoveredMaskId(null)
-    console.log('[drag-debug] drop → mask:', mask.id, mask.label, '| mat:', material.name, '| color:', mask.color)
-    // API call disabled for drag debugging
-    // addProcessingRegion(mask.id)
-    // try {
-    //   const result = await apiApplyMaterial(originalImage!, material.filename)
-    //   setAppliedRegion(mask.id, result.resultImage)
-    //   const canvas = canvasRef.current?.getCanvas()
-    //   if (canvas) {
-    //     await compositeRegion(canvas, result.resultImage, mask.color, dimensions.width, dimensions.height)
-    //     setCompositeImage(canvas.toDataURL('image/png').split(',')[1])
-    //   }
-    // } catch (err) {
-    //   console.error('Apply material failed:', err)
-    // } finally {
-    //   removeProcessingRegion(mask.id)
-    // }
-  }, [draggingMaterial, dimensions, masks, originalImage])
+    addProcessingRegion(mask.id)
+    try {
+      const result = await apiApplyMaterial(originalImage!, material.filename, debugPrompts.applyMaterial)
+      setAppliedRegion(mask.id, result.resultImage)
+      const canvas = canvasRef.current?.getCanvas()
+      if (canvas) {
+        await compositeRegion(canvas, result.resultImage, mask.color, dimensions.width, dimensions.height, mask.id)
+        setCompositeImage(canvas.toDataURL('image/png').split(',')[1])
+      }
+    } catch (err) {
+      console.error('Apply material failed:', err)
+    } finally {
+      removeProcessingRegion(mask.id)
+    }
+  }, [draggingMaterial, dimensions, masks, originalImage, debugPrompts.applyMaterial])
 
   const isProcessing = processingRegions.size > 0
 
@@ -269,12 +298,12 @@ export function EditorScreen() {
             />
           )}
 
-          {/* Shimmer while applying material */}
-          {processingRegions.size > 0 && (
-            <div className="absolute inset-0 pointer-events-none overflow-hidden" style={{ zIndex: 20 }}>
-              <div className="absolute inset-0 shimmer-bg" />
-            </div>
-          )}
+          {/* Processing shimmer – grayscale per-region while API call is in flight */}
+          <canvas
+            ref={processingCanvasRef}
+            className="absolute inset-0 w-full h-full pointer-events-none"
+            style={{ zIndex: 20 }}
+          />
         </div>
 
         {/* Debug panel – top-left of outer area */}

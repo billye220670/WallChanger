@@ -37,7 +37,7 @@ export async function processMasks(
   enhancedImage: string,
   promptClean?: string,
   promptRefine?: string,
-): Promise<{ refinedMask: string; masks: MaskInfo[] }> {
+): Promise<{ refinedMask: string; rawMask: string; masks: MaskInfo[] }> {
   const resp = await fetch(`${backendUrl}/process-masks`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
