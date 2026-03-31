@@ -42,10 +42,9 @@ export function EditorScreen() {
   const [debugFlags, setDebugFlags]  = useState<DebugFlags>({
     showClean: false, showRawMask: false, showRefinedMask: false, hoverHighlight: false, hoverFill: false,
   })
+  const [selectedMaskId, setSelectedMaskId] = useState<number | null>(null)
 
   // ── Contain-box sizing ────────────────────────────────────────────────────
-  // Computes the largest axis-aligned rect that fits the image aspect ratio
-  // within the outer container, keeping the canvas/overlays pixel-perfect.
   const [imgBox, setImgBox] = useState({ x: 0, y: 0, w: 0, h: 0 })
 
   useEffect(() => {
@@ -73,7 +72,12 @@ export function EditorScreen() {
     if (canvasReady && masks.length > 0) precomputeMaskOutlines(masks)
   }, [canvasReady, masks])
 
-  // ── Draw / clear outline overlay on hover change ──────────────────────────
+  // ── Clear selection when material drawer opens ────────────────────────────
+  useEffect(() => {
+    if (drawerOpen) setSelectedMaskId(null)
+  }, [drawerOpen])
+
+  // ── Draw / clear outline overlay on hover or selection change ─────────────
   useEffect(() => {
     const overlay   = overlayCanvasRef.current
     const container = imageContainerRef.current
@@ -86,21 +90,21 @@ export function EditorScreen() {
     overlay.width  = Math.round(w)
     overlay.height = Math.round(h)
 
-    if (hoveredMaskId === null || (!draggingMaterial && !debugFlags.hoverHighlight)) {
+    if (selectedMaskId === null) {
       drawMaskOutline(null, overlay)
       return
     }
-    drawMaskOutline(hoveredMaskId, overlay)
-  }, [hoveredMaskId, draggingMaterial, debugFlags.hoverHighlight, debugFlags.hoverFill, canvasReady])
+    drawMaskOutline(selectedMaskId, overlay)
+  }, [selectedMaskId, debugFlags.hoverFill, canvasReady])
 
   // ── Hover fill shimmer – rAF loop when hoverFill flag is on ───────────────
   useEffect(() => {
-    // When hoverFill is off or no mask is hovered, do nothing —
-    // the outline effect owns the canvas in that case.
-    if (!debugFlags.hoverFill || hoveredMaskId === null) return
+    if (!debugFlags.hoverFill) return
 
-    const hoveredMask = masks.find(m => m.id === hoveredMaskId)
-    if (!hoveredMask) return
+    if (selectedMaskId === null) return
+
+    const selectedMask = masks.find(m => m.id === selectedMaskId)
+    if (!selectedMask) return
 
     let animId: number
     const animate = (timestamp: number) => {
@@ -112,26 +116,21 @@ export function EditorScreen() {
         overlay.width  = Math.round(w)
         overlay.height = Math.round(h)
       }
-      drawMaskShimmer(hoveredMaskId, overlay, timestamp, hoveredMask.color)
+      drawMaskShimmer(selectedMaskId, overlay, timestamp, selectedMask.color)
       animId = requestAnimationFrame(animate)
     }
     animId = requestAnimationFrame(animate)
     return () => {
       cancelAnimationFrame(animId)
-      // Clear canvas so the outline effect can take over cleanly
       const overlay = overlayCanvasRef.current
       overlay?.getContext('2d')?.clearRect(0, 0, overlay.width, overlay.height)
     }
-  }, [debugFlags.hoverFill, hoveredMaskId, masks])
+  }, [debugFlags.hoverFill, selectedMaskId, masks])
 
-  // ── Hover highlight – mouse tracking when hoverHighlight or hoverFill debug flag is on ──
+  // ── Always-on hover tracking ───────────────────────────────────────────────
   useEffect(() => {
     const container = imageContainerRef.current
-    const needsHover = debugFlags.hoverHighlight || debugFlags.hoverFill
-    if (!container || !needsHover) {
-      if (!needsHover) setHoveredMaskId(null)
-      return
-    }
+    if (!container) return
 
     const handleMouseMove = (e: MouseEvent) => {
       if (!dimensions.width) return
@@ -148,7 +147,7 @@ export function EditorScreen() {
       container.removeEventListener('mousemove', handleMouseMove)
       container.removeEventListener('mouseleave', handleMouseLeave)
     }
-  }, [debugFlags.hoverHighlight, debugFlags.hoverFill, dimensions, masks])
+  }, [dimensions, masks])
 
   // ── Processing shimmer – grayscale rAF loop per processing region ──────────
   useEffect(() => {
@@ -237,13 +236,27 @@ export function EditorScreen() {
     return true
   }, [draggingMaterial, dimensions, masks, originalImage, debugPrompts.applyMaterial])
 
+  // ── Click-to-select handlers ───────────────────────────────────────────────
+  const handleImageClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!imageContainerRef.current || !dimensions.width) return
+    const { x: imgX, y: imgY } = touchToImageCoords(e.clientX, e.clientY, imageContainerRef.current, dimensions.width, dimensions.height)
+    const mask = getMaskAtPixel(imgX, imgY)
+    setSelectedMaskId(mask?.id ?? null)
+  }, [dimensions])
+
+  const handleOuterClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!imageContainerRef.current?.contains(e.target as Node)) {
+      setSelectedMaskId(null)
+    }
+  }, [])
+
   const isProcessing = processingRegions.size > 0
 
   return (
     <div className="fixed inset-0 bg-black flex flex-col">
 
       {/* ── Outer image area ─────────────────────────────────────────────── */}
-      <div ref={outerRef} className="flex-1 relative overflow-hidden">
+      <div ref={outerRef} className="flex-1 relative overflow-hidden" onClick={handleOuterClick}>
 
         {/* Loading overlay – covers outer area until canvas is drawn */}
         {!canvasReady && (
@@ -259,12 +272,16 @@ export function EditorScreen() {
         <div
           ref={imageContainerRef}
           className="absolute overflow-hidden"
-          style={{ left: imgBox.x, top: imgBox.y, width: imgBox.w, height: imgBox.h }}
+          style={{
+            left: imgBox.x, top: imgBox.y, width: imgBox.w, height: imgBox.h,
+            cursor: hoveredMaskId !== null ? 'pointer' : 'default',
+          }}
+          onClick={handleImageClick}
         >
           {/* Base image canvas */}
           <ImageCanvas ref={canvasRef} onReady={() => setCanvasReady(true)} />
 
-          {/* Outline highlight (edge glow on hover) */}
+          {/* Outline highlight (edge glow on hover/selection) */}
           <canvas
             ref={overlayCanvasRef}
             className="absolute inset-0 w-full h-full pointer-events-none"
@@ -352,6 +369,19 @@ export function EditorScreen() {
         >
           一键焕色
         </button>
+
+        {/* Edit button – bottom-left, shown when a mask is selected */}
+        {selectedMaskId !== null && (
+          <button
+            onClick={(e) => e.stopPropagation()}
+            className="absolute bottom-20 left-4 z-40 flex items-center gap-2 px-4 py-3 rounded-full font-bold text-white shadow-2xl bg-white/15 backdrop-blur-sm border border-white/20 hover:bg-white/25 active:scale-95 transition-all"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+            编辑
+          </button>
+        )}
       </div>
 
       {/* Material drawer */}

@@ -16,7 +16,9 @@
       "Bash(curl -s http://localhost:8100/health)",
       "Bash(curl:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git rm:*)"
     ]
   }
 }
