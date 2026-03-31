@@ -12,7 +12,11 @@
       "Bash(conda run:*)",
       "Bash(done)",
       "Bash(where python:*)",
-      "Bash(nvidia-smi)"
+      "Bash(nvidia-smi)",
+      "Bash(curl -s http://localhost:8100/health)",
+      "Bash(curl:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }

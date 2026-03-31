@@ -14,7 +14,7 @@ interface ImageCanvasProps {
 export const ImageCanvas = forwardRef<ImageCanvasHandle, ImageCanvasProps>(
   function ImageCanvas({ onReady }, ref) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
-    const { originalImage, rawMask, compositeImage, dimensions } = useStore()
+    const { originalImage, refinedMask, rawMask, compositeImage, dimensions } = useStore()
 
     // Keep a ref to compositeImage so Effect 1 can read the latest value
     // without needing it in the dependency array (avoids re-running mask init)
@@ -43,7 +43,9 @@ export const ImageCanvas = forwardRef<ImageCanvasHandle, ImageCanvasProps>(
       img.onload = async () => {
         ctx.drawImage(img, 0, 0, width, height)
         initOffscreenCanvas(width, height)
-        if (rawMask) {
+        if (refinedMask) {
+          await loadMaskIntoOffscreen(refinedMask)
+        } else if (rawMask) {
           await loadMaskIntoOffscreen(rawMask)
         }
         // If a composite already exists (e.g. Effect 1 re-ran after compositing),
@@ -60,7 +62,7 @@ export const ImageCanvas = forwardRef<ImageCanvasHandle, ImageCanvasProps>(
         onReady()
       }
       img.src = `data:image/jpeg;base64,${originalImage}`
-    }, [originalImage, rawMask])
+    }, [originalImage, refinedMask, rawMask])
 
     useEffect(() => {
       if (!compositeImage || !canvasRef.current) return

@@ -16,6 +16,7 @@ interface AppStore extends AppState {
   setHoveredMaskId: (id: number | null) => void
   setBackendUrl: (url: string) => void
   setDebugPrompts: (prompts: DebugPrompts) => void
+  loadExample: (originalImage: string, width: number, height: number, refinedMask: string, rawMask: string, masks: MaskInfo[]) => void
   reset: () => void
 }
 
@@ -101,6 +102,20 @@ export const useStore = create<AppStore>((set, get) => ({
     localStorage.setItem('debugPrompts', JSON.stringify(debugPrompts))
     set({ debugPrompts })
   },
+
+  loadExample: (originalImage, width, height, refinedMask, rawMask, masks) => set({
+    originalImage,
+    dimensions: { width, height },
+    refinedMask,
+    rawMask,
+    masks,
+    compositeImage: null,
+    finalImage: null,
+    appliedRegions: new Map<number, string>(),
+    processingRegions: new Set<number>(),
+    processingStep: 4,
+    phase: 'editing',
+  }),
 
   reset: () => set({
     ...initialState,

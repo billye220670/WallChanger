@@ -14,7 +14,7 @@ import httpx
 
 load_dotenv()
 
-# ── SAM3 import ──────────────────────────────────────────────────────────────
+# ── SAM3 local import ─────────────────────────────────────────────────────────
 sam3d_path = os.getenv("SAM3D_PATH", "C:/Users/Tintt/Documents/SAM3D")
 sys.path.insert(0, sam3d_path)
 from app import init_model, segment_image   # noqa: E402
@@ -169,7 +169,7 @@ def health():
     return {"status": "ok", "model_loaded": _model_loaded}
 
 
-@app.get("/materials")
+@app.get("/api/materials")
 def get_materials():
     items = []
     for f in sorted(MATERIALS_DIR.iterdir()):
@@ -202,7 +202,7 @@ def enhance(req: ProcessUploadRequest):
 
 @app.post("/process-masks")
 def process_masks(req: ProcessMasksRequest):
-    """Steps 2-4: Flux clean → SAM3 → blur mask → Flux refine → returns masks."""
+    """Steps 2-4: Seedream clean → local SAM3 → Seedream refine → returns masks."""
     enhanced = base64_to_image(req.enhancedImage)
     print(f"[process-masks] input size={enhanced.size}")
 
@@ -211,7 +211,7 @@ def process_masks(req: ProcessMasksRequest):
     cleaned.save(DEBUG_DIR / "cleaned.png")
     print(f"[process-masks] cleaned size={cleaned.size}")
 
-    # Step 3: SAM3 segmentation
+    # Step 3: Local SAM3 segmentation
     if not _model_loaded:
         raise HTTPException(503, detail="SAM3 model not yet loaded")
 

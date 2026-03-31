@@ -13,7 +13,7 @@ export async function checkHealth(): Promise<{ status: string; model_loaded: boo
 }
 
 export async function getMaterials(): Promise<Material[]> {
-  const resp = await fetch(`${backendUrl}/materials`)
+  const resp = await fetch(`${backendUrl}/api/materials`)
   if (!resp.ok) throw new Error(`Failed to fetch materials: ${resp.status}`)
   return resp.json()
 }
@@ -43,8 +43,14 @@ export async function processMasks(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enhancedImage, promptClean, promptRefine }),
   })
-  if (!resp.ok) throw new Error(`Process masks failed: ${resp.status}`)
-  return resp.json()
+  if (!resp.ok) {
+    const text = await resp.text()
+    console.error('[process-masks] error response:', resp.status, text)
+    throw new Error(`Process masks failed: ${resp.status} — ${text}`)
+  }
+  const data = await resp.json()
+  console.log('[process-masks] success:', { masksCount: data.masks?.length, masks: data.masks })
+  return data
 }
 
 export async function processUpload(
