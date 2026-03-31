@@ -226,8 +226,8 @@ def process_masks(req: ProcessMasksRequest):
     mask_img = base64_to_image(seg["mask_only_b64"])
     mask_img.save(DEBUG_DIR / "mask_raw.png")
 
-    # Step 4: Seedream refine (no blur preprocessing)
-    refined = call_seedream(req.promptRefine, [pil_to_data_uri(mask_img)])
+    # Step 4: Seedream refine — send as PNG (lossless) to avoid JPEG noise at input
+    refined = call_seedream(req.promptRefine, [pil_to_data_uri(mask_img, "PNG")])
     refined.save(DEBUG_DIR / "mask_refined.png")
 
     return {

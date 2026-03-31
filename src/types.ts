@@ -23,7 +23,7 @@ export interface DebugPrompts {
 export const DEFAULT_PROMPTS: DebugPrompts = {
   enhance:       'Realistic render',
   clean:         'empty room',
-  refine:        'Remove all black outlines and black boundary lines between color regions. Make each colored area fill seamlessly to their edges without any black gaps, borders, or outlines. The result should have clean, sharp color boundaries where colors meet directly with no black separation lines.',
+  refine:        'Image Editing Prompt\nTask: Remove black outlines and recolor\n\nREMOVE\nAll black outlines\nAll black boundary lines between color regions\nAll black borders, gaps, and separation lines\nFILL\nEvery color region fills completely to its edges\nNo black gaps between regions\nColors meet directly at sharp, clean edges\nCOLOR RULE ⚠️\nEach region = one flat solid color only\nNo gradients\nNo shading\nNo textures\nNo color blending\nLIGHTING\nUnlit scene\nNo highlights\nNo shadows\nNo light effects\nBOUNDARIES\nColor-to-color contact only\nHard edges between regions\nNo anti-aliasing bleed\nNo feathering',
   applyMaterial: 'based on image 2, change all wall material in image 1.',
   finalize:      'realistic render',
 }

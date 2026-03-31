@@ -1,8 +1,15 @@
 import type { MaskInfo } from '../types'
 
 /**
- * Maximally distinct, high-saturation colors.
- * Spread across hue wheel so even adjacent entries are clearly different.
+ * Squared Euclidean snap threshold (40 units ≈ typical JPEG artefact range).
+ * Pixels closer than this to a known mask color → snapped to that color.
+ * Pixels farther from ALL mask colors → set to pure black (background/gap).
+ */
+const SNAP_THRESHOLD_SQ = 40 * 40
+
+/**
+ * Maximally distinct, high-saturation colors for when SAM3 returns
+ * two or more regions with visually similar colors.
  */
 const PALETTE: [number, number, number][] = [
   [0,   200, 255],  // cyan
@@ -19,7 +26,6 @@ const PALETTE: [number, number, number][] = [
   [0,   255, 200],  // aqua
 ]
 
-/** Generate an additional distinct color via golden-angle HSL if palette runs out. */
 function extraColor(index: number): [number, number, number] {
   const hue = (index * 137.508) % 360
   const [r, g, b] = hslToRgb(hue / 360, 0.9, 0.55)
@@ -35,36 +41,42 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)]
 }
 
-function colorDist(a: [number, number, number], b: [number, number, number]): number {
-  return Math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2)
+function colorDistSq(a: [number, number, number], b: [number, number, number]): number {
+  return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2
 }
 
-function anyTooSimilar(masks: MaskInfo[], threshold = 60): boolean {
+function anyTooSimilar(masks: MaskInfo[], threshold: number): boolean {
   for (let i = 0; i < masks.length; i++) {
     for (let j = i + 1; j < masks.length; j++) {
-      if (colorDist(masks[i].color, masks[j].color) < threshold) return true
+      if (Math.sqrt(colorDistSq(masks[i].color, masks[j].color)) < threshold) return true
     }
   }
   return false
 }
 
 /**
- * If any two mask colors are too similar (within `threshold` Euclidean distance),
- * reassigns ALL masks to palette colors and remaps the mask image pixels accordingly.
- * Returns the original data unchanged if all colors are already sufficiently distinct.
+ * Purifies a Seedream-refined mask by snapping every pixel to its nearest
+ * known mask color (within SNAP_THRESHOLD) or to pure black (background).
+ *
+ * This eliminates JPEG compression artifacts — blended boundary pixels that
+ * fall between two mask colors — and produces a clean, palette-exact PNG.
+ *
+ * Additionally, if any two mask colors are too similar (within `dedupThreshold`),
+ * all regions are remapped to maximally distinct PALETTE colors.
  */
 export async function remapMaskColors(
   refinedMaskBase64: string,
   masks: MaskInfo[],
-  threshold = 60,
+  dedupThreshold = 60,
 ): Promise<{ refinedMask: string; masks: MaskInfo[] }> {
-  if (masks.length <= 1 || !anyTooSimilar(masks, threshold)) {
-    return { refinedMask: refinedMaskBase64, masks }
-  }
-
-  const newColors: [number, number, number][] = masks.map((_, i) =>
-    i < PALETTE.length ? PALETTE[i] : extraColor(i)
-  )
+  // If colors are too similar, remap to distinct palette entries
+  const needsDedup = masks.length > 1 && anyTooSimilar(masks, dedupThreshold)
+  const targetColors: [number, number, number][] = needsDedup
+    ? masks.map((_, i) => i < PALETTE.length ? PALETTE[i] : extraColor(i))
+    : masks.map(m => m.color)
+  const newMasks = needsDedup
+    ? masks.map((m, i) => ({ ...m, color: targetColors[i] }))
+    : masks
 
   return new Promise((resolve, reject) => {
     const img = new Image()
@@ -80,25 +92,27 @@ export async function remapMaskColors(
 
       for (let i = 0; i < d.length; i += 4) {
         const r = d[i], g = d[i + 1], b = d[i + 2]
-        if (r === 0 && g === 0 && b === 0) continue   // black = unassigned
+        if (r === 0 && g === 0 && b === 0) continue   // already pure black — keep
 
-        // Nearest original mask color → assign new palette color
-        let bestDist = Infinity, bestMi = -1
+        // Find nearest original SAM3 mask color
+        let bestDistSq = Infinity, bestMi = -1
         for (let mi = 0; mi < masks.length; mi++) {
-          const [mr, mg, mb] = masks[mi].color
-          const dist = (r - mr) ** 2 + (g - mg) ** 2 + (b - mb) ** 2
-          if (dist < bestDist) { bestDist = dist; bestMi = mi }
+          const dSq = colorDistSq([r, g, b], masks[mi].color)
+          if (dSq < bestDistSq) { bestDistSq = dSq; bestMi = mi }
         }
-        if (bestMi === -1) continue
 
-        const [nr, ng, nb] = newColors[bestMi]
-        d[i] = nr; d[i + 1] = ng; d[i + 2] = nb
+        if (bestMi === -1 || bestDistSq > SNAP_THRESHOLD_SQ) {
+          // Too far from every known mask color → background/gap, set black
+          d[i] = 0; d[i + 1] = 0; d[i + 2] = 0
+        } else {
+          // Snap to the target color for this mask region
+          const [nr, ng, nb] = targetColors[bestMi]
+          d[i] = nr; d[i + 1] = ng; d[i + 2] = nb
+        }
       }
 
       ctx.putImageData(imageData, 0, 0)
-
       const newRefinedMask = canvas.toDataURL('image/png').split(',')[1]
-      const newMasks = masks.map((m, i) => ({ ...m, color: newColors[i] }))
       resolve({ refinedMask: newRefinedMask, masks: newMasks })
     }
     img.onerror = reject
