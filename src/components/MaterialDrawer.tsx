@@ -9,7 +9,7 @@ interface MaterialDrawerProps {
   onToggle: () => void
   onDragStart: (material: Material, x: number, y: number) => void
   onDragMove: (x: number, y: number) => void
-  onDragEnd: (x: number, y: number) => void
+  onDragEnd: (x: number, y: number) => Promise<boolean>
 }
 
 export function MaterialDrawer({ open, onToggle, onDragStart, onDragMove, onDragEnd }: MaterialDrawerProps) {
@@ -89,7 +89,7 @@ export function MaterialDrawer({ open, onToggle, onDragStart, onDragMove, onDrag
   return (
     <div
       ref={drawerRef}
-      className={`fixed bottom-0 inset-x-0 z-30 bg-gray-900 rounded-t-2xl shadow-2xl ${transitionClass} ${positionClass}`}
+      className={`fixed bottom-0 inset-x-0 z-50 bg-gray-900/40 backdrop-blur-md border-t border-white/[0.08] rounded-t-2xl shadow-2xl ${transitionClass} ${positionClass}`}
       style={style}
     >
       {/* Handle — drag target */}
@@ -122,9 +122,9 @@ export function MaterialDrawer({ open, onToggle, onDragStart, onDragMove, onDrag
               <MaterialTile
                 key={m.filename}
                 material={m}
-                onDragStart={onDragStart}
+                onDragStart={(material, x, y) => { if (open) onToggle(); onDragStart(material, x, y) }}
                 onDragMove={onDragMove}
-                onDragEnd={onDragEnd}
+                onDragEnd={async (x, y) => { const valid = await onDragEnd(x, y); if (!valid) onToggle() }}
               />
             ))}
           </div>

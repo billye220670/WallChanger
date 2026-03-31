@@ -380,10 +380,7 @@ export function drawMaskShimmer(
 
   const scaleX = sW / dW
   const scaleY = sH / dH
-  const PERIOD = 1500
-  const phase  = (timestamp % PERIOD) / PERIOD
-  const sweepX = (phase * 1.6 - 0.3) * dW
-  const BAND   = dW * 0.15
+  const t = (timestamp / 2500) * Math.PI * 2
   const [cr, cg, cb] = color
 
   const outData = ctx.createImageData(dW, dH)
@@ -391,20 +388,21 @@ export function drawMaskShimmer(
 
   for (let dy = 0; dy < dH; dy++) {
     for (let dx = 0; dx < dW; dx++) {
-      // smoothMask bilinear → 0..255; divide for 0..1 alpha
       const maskAlpha = sampleBilinear(smoothMask, sW, sH, dx * scaleX, dy * scaleY) / 255
       if (maskAlpha < 0.01) continue
 
-      const t       = Math.max(0, 1 - Math.abs(dx - sweepX) / BAND)
-      const shimmer = t * t
-      const alpha   = 0.35 + shimmer * 0.5
-      const blend   = shimmer * 0.75
+      const wave1   = Math.sin(dx * 0.018 + dy * 0.004 + t)
+      const wave2   = Math.sin(dx * 0.011 - dy * 0.006 + t * 0.71 + 1.0)
+      const shimmer = (wave1 + wave2) * 0.25 + 0.5   // 0..1 gentle ripple
+
+      const alpha = maskAlpha * (0.60 + shimmer * 0.40)
+      const blend = shimmer * 0.70
 
       const di = (dy * dW + dx) * 4
       od[di]     = Math.round(cr * (1 - blend) + 255 * blend)
       od[di + 1] = Math.round(cg * (1 - blend) + 255 * blend)
       od[di + 2] = Math.round(cb * (1 - blend) + 255 * blend)
-      od[di + 3] = Math.round(maskAlpha * alpha * 255)
+      od[di + 3] = Math.round(alpha * 255)
     }
   }
 
@@ -427,10 +425,7 @@ export function drawProcessingShimmer(
   const dH = shimmerCanvas.height
   if (!dW || !dH || maskIds.length === 0) return
 
-  const PERIOD = 1500
-  const phase  = (timestamp % PERIOD) / PERIOD
-  const sweepX = (phase * 1.6 - 0.3) * dW
-  const BAND   = dW * 0.15
+  const t = (timestamp / 2500) * Math.PI * 2
 
   const outData = ctx.createImageData(dW, dH)
   const od = outData.data
@@ -448,11 +443,12 @@ export function drawProcessingShimmer(
         const maskAlpha = sampleBilinear(smoothMask, sW, sH, dx * scaleX, dy * scaleY) / 255
         if (maskAlpha < 0.01) continue
 
-        const t       = Math.max(0, 1 - Math.abs(dx - sweepX) / BAND)
-        const shimmer = t * t
-        const alpha   = maskAlpha * (0.4 + shimmer * 0.45)
+        const wave1   = Math.sin(dx * 0.018 + dy * 0.004 + t)
+        const wave2   = Math.sin(dx * 0.011 - dy * 0.006 + t * 0.71 + 1.0)
+        const shimmer = (wave1 + wave2) * 0.25 + 0.5   // 0..1 gentle ripple
 
-        const brightness = Math.round(130 + shimmer * 125)
+        const alpha      = maskAlpha * (0.55 + shimmer * 0.45)
+        const brightness = Math.round(120 + shimmer * 135)   // 120..255
         const di = (dy * dW + dx) * 4
         od[di]     = brightness
         od[di + 1] = brightness

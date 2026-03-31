@@ -91,7 +91,7 @@ export function MaterialTile({ material, onDragStart, onDragMove, onDragEnd }: M
   return (
     <div
       ref={divRef}
-      className="relative rounded-xl overflow-hidden aspect-square bg-gray-800 cursor-grab active:cursor-grabbing"
+      className="relative rounded-xl overflow-hidden aspect-square cursor-grab active:cursor-grabbing"
     >
       <img
         src={`${backendUrl}/materials/${material.filename}`}
@@ -100,9 +100,6 @@ export function MaterialTile({ material, onDragStart, onDragMove, onDragEnd }: M
         crossOrigin="anonymous"
         draggable={false}
       />
-      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-2">
-        <p className="text-white text-xs text-center truncate">{material.name}</p>
-      </div>
     </div>
   )
 }

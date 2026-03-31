@@ -155,7 +155,7 @@ export function ExamplesDrawer({ open, onToggle }: ExamplesDrawerProps) {
   return (
     <div
       ref={drawerRef}
-      className={`fixed bottom-0 inset-x-0 z-30 bg-gray-900 rounded-t-2xl shadow-2xl ${transitionClass} ${positionClass}`}
+      className={`fixed bottom-0 inset-x-0 z-30 bg-gray-900/40 backdrop-blur-md border-t border-white/[0.08] rounded-t-2xl shadow-2xl ${transitionClass} ${positionClass}`}
       style={style}
     >
       {/* Handle */}

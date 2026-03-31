@@ -202,22 +202,22 @@ export function EditorScreen() {
     setHoveredMaskId(mask?.id ?? null)
   }, [dimensions, masks])
 
-  const handleDragEnd = useCallback(async (x: number, y: number) => {
-    if (!draggingMaterial) { setDraggingMaterial(null); setHoveredMaskId(null); return }
+  const handleDragEnd = useCallback(async (x: number, y: number): Promise<boolean> => {
+    if (!draggingMaterial) { setDraggingMaterial(null); setHoveredMaskId(null); return false }
 
     const material = draggingMaterial
     setDraggingMaterial(null)
 
-    if (!imageContainerRef.current || !dimensions.width) { setHoveredMaskId(null); return }
+    if (!imageContainerRef.current || !dimensions.width) { setHoveredMaskId(null); return false }
 
     const rect = imageContainerRef.current.getBoundingClientRect()
     if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
-      setHoveredMaskId(null); return
+      setHoveredMaskId(null); return false
     }
 
     const { x: imgX, y: imgY } = touchToImageCoords(x, y, imageContainerRef.current, dimensions.width, dimensions.height)
     const mask = getMaskAtPixel(imgX, imgY)
-    if (!mask) { setHoveredMaskId(null); return }
+    if (!mask) { setHoveredMaskId(null); return false }
 
     setHoveredMaskId(null)
     addProcessingRegion(mask.id)
@@ -234,6 +234,7 @@ export function EditorScreen() {
     } finally {
       removeProcessingRegion(mask.id)
     }
+    return true
   }, [draggingMaterial, dimensions, masks, originalImage, debugPrompts.applyMaterial])
 
   const isProcessing = processingRegions.size > 0
@@ -307,12 +308,12 @@ export function EditorScreen() {
         </div>
 
         {/* Debug panel – top-left of outer area */}
-        <DebugPanel
+        {false && <DebugPanel
           flags={debugFlags}
           onChange={setDebugFlags}
           prompts={debugPrompts}
           onPromptsChange={setDebugPrompts}
-        />
+        />}
 
         {/* Hover debug HUD – top-right, only when hoverHighlight is on */}
         {debugFlags.hoverHighlight && (() => {
