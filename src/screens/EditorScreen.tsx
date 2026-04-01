@@ -6,8 +6,16 @@ import { MaterialDrawer } from '../components/MaterialDrawer'
 import { DragPreview } from '../components/DragPreview'
 import { DebugPanel, type DebugFlags } from '../components/DebugPanel'
 import { applyMaterial as apiApplyMaterial, setBackendUrl } from '../utils/api'
-import { getMaskAtPixel, compositeRegion, precomputeMaskOutlines, drawMaskOutline, drawMaskShimmer, drawProcessingShimmer } from '../utils/canvas'
+import { getMaskAtPixel, compositeRegion, precomputeMaskOutlines, drawMaskOutline, drawMaskShimmer, drawProcessingShimmer, drawMaskDim, splitMaskByLine } from '../utils/canvas'
 import { touchToImageCoords } from '../utils/coords'
+
+// ── Line editor types ─────────────────────────────────────────────────────────
+interface Point { x: number; y: number }
+
+type DragTarget =
+  | { kind: 'start' }
+  | { kind: 'end' }
+  | { kind: 'line'; startBase: Point; endBase: Point; pointerStart: Point }
 
 export function EditorScreen() {
   const {
@@ -19,6 +27,7 @@ export function EditorScreen() {
     backendUrl,
     originalImage,
     refinedMask,
+    rawMask,
     debugPrompts,
     setDraggingMaterial,
     setHoveredMaskId,
@@ -28,21 +37,31 @@ export function EditorScreen() {
     setCompositeImage,
     setPhase,
     setDebugPrompts,
+    setMasks,
   } = useStore()
 
-  const canvasRef        = useRef<ImageCanvasHandle>(null)
-  const outerRef         = useRef<HTMLDivElement>(null)
-  const imageContainerRef = useRef<HTMLDivElement>(null)
-  const overlayCanvasRef = useRef<HTMLCanvasElement>(null)
+  const canvasRef           = useRef<ImageCanvasHandle>(null)
+  const outerRef            = useRef<HTMLDivElement>(null)
+  const imageContainerRef   = useRef<HTMLDivElement>(null)
+  const overlayCanvasRef    = useRef<HTMLCanvasElement>(null)
   const processingCanvasRef = useRef<HTMLCanvasElement>(null)
+  const dimCanvasRef        = useRef<HTMLCanvasElement>(null)
+  const lineCanvasRef       = useRef<HTMLCanvasElement>(null)
 
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const [dragPos, setDragPos]       = useState({ x: 0, y: 0 })
-  const [canvasReady, setCanvasReady] = useState(false)
-  const [debugFlags, setDebugFlags]  = useState<DebugFlags>({
+  const [drawerOpen, setDrawerOpen]     = useState(false)
+  const [dragPos, setDragPos]           = useState({ x: 0, y: 0 })
+  const [canvasReady, setCanvasReady]   = useState(false)
+  const [debugFlags, setDebugFlags]     = useState<DebugFlags>({
     showClean: false, showRawMask: false, showRefinedMask: false, hoverHighlight: false, hoverFill: false,
   })
   const [selectedMaskId, setSelectedMaskId] = useState<number | null>(null)
+
+  // editing mode
+  const [editing, setEditing]   = useState(false)
+  // line state in display pixels (relative to imageContainerRef)
+  const [lineStart, setLineStart] = useState<Point | null>(null)
+  const [lineEnd, setLineEnd]     = useState<Point | null>(null)
+  const lineDragRef = useRef<DragTarget | null>(null)
 
   // ── Contain-box sizing ────────────────────────────────────────────────────
   const [imgBox, setImgBox] = useState({ x: 0, y: 0, w: 0, h: 0 })
@@ -50,7 +69,6 @@ export function EditorScreen() {
   useEffect(() => {
     const outer = outerRef.current
     if (!outer || !dimensions.width || !dimensions.height) return
-
     const compute = () => {
       const { width: cw, height: ch } = outer.getBoundingClientRect()
       if (!cw || !ch) return
@@ -60,7 +78,6 @@ export function EditorScreen() {
       const h = iAR > cAR ? cw / iAR : ch
       setImgBox({ x: (cw - w) / 2, y: (ch - h) / 2, w, h })
     }
-
     compute()
     const ro = new ResizeObserver(compute)
     ro.observe(outer)
@@ -74,38 +91,32 @@ export function EditorScreen() {
 
   // ── Clear selection when material drawer opens ────────────────────────────
   useEffect(() => {
-    if (drawerOpen) setSelectedMaskId(null)
+    if (drawerOpen) { setSelectedMaskId(null); setEditing(false) }
   }, [drawerOpen])
 
-  // ── Draw / clear outline overlay on hover or selection change ─────────────
+  // ── Exit editing when selection cleared ──────────────────────────────────
+  useEffect(() => {
+    if (selectedMaskId === null) setEditing(false)
+  }, [selectedMaskId])
+
+  // ── Draw / clear outline overlay on selection change ─────────────────────
   useEffect(() => {
     const overlay   = overlayCanvasRef.current
     const container = imageContainerRef.current
     if (!overlay || !container) return
-
-    // hoverFill mode: rAF loop owns the overlay canvas — don't touch it here
     if (debugFlags.hoverFill) return
-
     const { width: w, height: h } = container.getBoundingClientRect()
     overlay.width  = Math.round(w)
     overlay.height = Math.round(h)
-
-    if (selectedMaskId === null) {
-      drawMaskOutline(null, overlay)
-      return
-    }
+    if (selectedMaskId === null) { drawMaskOutline(null, overlay); return }
     drawMaskOutline(selectedMaskId, overlay)
   }, [selectedMaskId, debugFlags.hoverFill, canvasReady])
 
-  // ── Hover fill shimmer – rAF loop when hoverFill flag is on ───────────────
+  // ── Hover fill shimmer ────────────────────────────────────────────────────
   useEffect(() => {
-    if (!debugFlags.hoverFill) return
-
-    if (selectedMaskId === null) return
-
+    if (!debugFlags.hoverFill || selectedMaskId === null) return
     const selectedMask = masks.find(m => m.id === selectedMaskId)
     if (!selectedMask) return
-
     let animId: number
     const animate = (timestamp: number) => {
       const overlay   = overlayCanvasRef.current
@@ -127,20 +138,71 @@ export function EditorScreen() {
     }
   }, [debugFlags.hoverFill, selectedMaskId, masks])
 
+  // ── Dim overlay (editing mode) ────────────────────────────────────────────
+  useEffect(() => {
+    const dim       = dimCanvasRef.current
+    const container = imageContainerRef.current
+    if (!dim || !container) return
+    const { width: w, height: h } = container.getBoundingClientRect()
+    dim.width  = Math.round(w)
+    dim.height = Math.round(h)
+    if (editing && selectedMaskId !== null) {
+      drawMaskDim(selectedMaskId, dim)
+    } else {
+      dim.getContext('2d')?.clearRect(0, 0, dim.width, dim.height)
+    }
+  }, [editing, selectedMaskId, canvasReady])
+
+  // ── Draw dashed line + control points ────────────────────────────────────
+  useEffect(() => {
+    const lc        = lineCanvasRef.current
+    const container = imageContainerRef.current
+    if (!lc || !container) return
+    const { width: w, height: h } = container.getBoundingClientRect()
+    lc.width  = Math.round(w)
+    lc.height = Math.round(h)
+    const ctx = lc.getContext('2d')!
+    ctx.clearRect(0, 0, lc.width, lc.height)
+
+    if (!editing || !lineStart || !lineEnd) return
+
+    // Dashed line
+    ctx.save()
+    ctx.strokeStyle = 'white'
+    ctx.lineWidth   = 2
+    ctx.setLineDash([8, 5])
+    ctx.lineDashOffset = 0
+    ctx.beginPath()
+    ctx.moveTo(lineStart.x, lineStart.y)
+    ctx.lineTo(lineEnd.x, lineEnd.y)
+    ctx.stroke()
+    ctx.restore()
+
+    // Control point circles
+    for (const pt of [lineStart, lineEnd]) {
+      ctx.save()
+      ctx.beginPath()
+      ctx.arc(pt.x, pt.y, 10, 0, Math.PI * 2)
+      ctx.fillStyle = 'white'
+      ctx.fill()
+      ctx.strokeStyle = 'rgba(0,0,0,0.4)'
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+      ctx.restore()
+    }
+  }, [editing, lineStart, lineEnd])
+
   // ── Always-on hover tracking ───────────────────────────────────────────────
   useEffect(() => {
     const container = imageContainerRef.current
     if (!container) return
-
     const handleMouseMove = (e: MouseEvent) => {
       if (!dimensions.width) return
       const { x: imgX, y: imgY } = touchToImageCoords(e.clientX, e.clientY, container, dimensions.width, dimensions.height)
       const mask = getMaskAtPixel(imgX, imgY)
       setHoveredMaskId(mask?.id ?? null)
     }
-
     const handleMouseLeave = () => setHoveredMaskId(null)
-
     container.addEventListener('mousemove', handleMouseMove)
     container.addEventListener('mouseleave', handleMouseLeave)
     return () => {
@@ -149,7 +211,7 @@ export function EditorScreen() {
     }
   }, [dimensions, masks])
 
-  // ── Processing shimmer – grayscale rAF loop per processing region ──────────
+  // ── Processing shimmer ────────────────────────────────────────────────────
   useEffect(() => {
     const ids = Array.from(processingRegions)
     if (ids.length === 0) {
@@ -157,7 +219,6 @@ export function EditorScreen() {
       pc?.getContext('2d')?.clearRect(0, 0, pc.width, pc.height)
       return
     }
-
     let animId: number
     const animate = (timestamp: number) => {
       const pc        = processingCanvasRef.current
@@ -179,7 +240,7 @@ export function EditorScreen() {
     }
   }, [processingRegions])
 
-  // ── Drag handlers ─────────────────────────────────────────────────────────
+  // ── Material drag handlers ────────────────────────────────────────────────
   const handleDragStart = useCallback((material: Material, x: number, y: number) => {
     setBackendUrl(backendUrl)
     setDraggingMaterial(material)
@@ -189,13 +250,10 @@ export function EditorScreen() {
   const handleDragMove = useCallback((x: number, y: number) => {
     setDragPos({ x, y })
     if (!imageContainerRef.current || !dimensions.width) return
-
     const rect = imageContainerRef.current.getBoundingClientRect()
     if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
-      setHoveredMaskId(null)
-      return
+      setHoveredMaskId(null); return
     }
-
     const { x: imgX, y: imgY } = touchToImageCoords(x, y, imageContainerRef.current, dimensions.width, dimensions.height)
     const mask = getMaskAtPixel(imgX, imgY)
     setHoveredMaskId(mask?.id ?? null)
@@ -203,21 +261,16 @@ export function EditorScreen() {
 
   const handleDragEnd = useCallback(async (x: number, y: number): Promise<boolean> => {
     if (!draggingMaterial) { setDraggingMaterial(null); setHoveredMaskId(null); return false }
-
     const material = draggingMaterial
     setDraggingMaterial(null)
-
     if (!imageContainerRef.current || !dimensions.width) { setHoveredMaskId(null); return false }
-
     const rect = imageContainerRef.current.getBoundingClientRect()
     if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
       setHoveredMaskId(null); return false
     }
-
     const { x: imgX, y: imgY } = touchToImageCoords(x, y, imageContainerRef.current, dimensions.width, dimensions.height)
     const mask = getMaskAtPixel(imgX, imgY)
     if (!mask) { setHoveredMaskId(null); return false }
-
     setHoveredMaskId(null)
     addProcessingRegion(mask.id)
     try {
@@ -236,19 +289,125 @@ export function EditorScreen() {
     return true
   }, [draggingMaterial, dimensions, masks, originalImage, debugPrompts.applyMaterial])
 
-  // ── Click-to-select handlers ───────────────────────────────────────────────
+  // ── Click-to-select (normal mode) ────────────────────────────────────────
   const handleImageClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (editing) return
     if (!imageContainerRef.current || !dimensions.width) return
     const { x: imgX, y: imgY } = touchToImageCoords(e.clientX, e.clientY, imageContainerRef.current, dimensions.width, dimensions.height)
     const mask = getMaskAtPixel(imgX, imgY)
     setSelectedMaskId(mask?.id ?? null)
-  }, [dimensions])
+  }, [editing, dimensions])
 
   const handleOuterClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (editing) return
     if (!imageContainerRef.current?.contains(e.target as Node)) {
       setSelectedMaskId(null)
     }
+  }, [editing])
+
+  // ── Line editor pointer handlers ──────────────────────────────────────────
+  // Helpers to convert clientXY → coords relative to imageContainerRef
+  const clientToContainer = useCallback((cx: number, cy: number): Point => {
+    const rect = imageContainerRef.current!.getBoundingClientRect()
+    return { x: cx - rect.left, y: cy - rect.top }
   }, [])
+
+  const HANDLE_RADIUS = 18 // px hit area for control points
+
+  const handleLinePointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!editing) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    const pt = clientToContainer(e.clientX, e.clientY)
+
+    // Check control points first
+    if (lineStart && lineEnd) {
+      const distSq = (a: Point, b: Point) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2
+      if (distSq(pt, lineStart) <= HANDLE_RADIUS ** 2) {
+        lineDragRef.current = { kind: 'start' }
+        return
+      }
+      if (distSq(pt, lineEnd) <= HANDLE_RADIUS ** 2) {
+        lineDragRef.current = { kind: 'end' }
+        return
+      }
+
+      // Check proximity to the line segment (within 16px)
+      const dx = lineEnd.x - lineStart.x
+      const dy = lineEnd.y - lineStart.y
+      const len2 = dx * dx + dy * dy
+      if (len2 > 0) {
+        const t = Math.max(0, Math.min(1, ((pt.x - lineStart.x) * dx + (pt.y - lineStart.y) * dy) / len2))
+        const closestX = lineStart.x + t * dx
+        const closestY = lineStart.y + t * dy
+        const dist2 = (pt.x - closestX) ** 2 + (pt.y - closestY) ** 2
+        if (dist2 <= 16 ** 2) {
+          lineDragRef.current = { kind: 'line', startBase: { ...lineStart }, endBase: { ...lineEnd }, pointerStart: pt }
+          return
+        }
+      }
+    }
+
+    // Start a new line
+    setLineStart(pt)
+    setLineEnd(pt)
+    lineDragRef.current = { kind: 'end' }
+  }, [editing, lineStart, lineEnd, clientToContainer])
+
+  const handleLinePointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!editing || !lineDragRef.current) return
+    const pt = clientToContainer(e.clientX, e.clientY)
+    const target = lineDragRef.current
+
+    if (target.kind === 'start') {
+      setLineStart(pt)
+    } else if (target.kind === 'end') {
+      setLineEnd(pt)
+    } else {
+      const dx = pt.x - target.pointerStart.x
+      const dy = pt.y - target.pointerStart.y
+      setLineStart({ x: target.startBase.x + dx, y: target.startBase.y + dy })
+      setLineEnd({ x: target.endBase.x + dx, y: target.endBase.y + dy })
+    }
+  }, [editing, clientToContainer])
+
+  const handleLinePointerUp = useCallback(() => {
+    lineDragRef.current = null
+  }, [])
+
+  const handleApply = useCallback(() => {
+    if (!lineStart || !lineEnd || selectedMaskId === null) return
+    const container = imageContainerRef.current
+    if (!container) return
+
+    // Convert display coords (px relative to container) → mask image coords
+    const { width: dispW, height: dispH } = container.getBoundingClientRect()
+    const scaleX = dimensions.width  / dispW
+    const scaleY = dimensions.height / dispH
+
+    const x1 = lineStart.x * scaleX
+    const y1 = lineStart.y * scaleY
+    const x2 = lineEnd.x   * scaleX
+    const y2 = lineEnd.y   * scaleY
+
+    const result = splitMaskByLine(selectedMaskId, x1, y1, x2, y2, masks)
+    if (!result) {
+      // Line didn't split the region — silently ignore
+      return
+    }
+
+    const { newMaskBase64, newMask } = result
+    const updatedMasks = [...masks, newMask]
+
+    // Persist back: rawMask stays unchanged; refinedMask updated from offscreen
+    setMasks(newMaskBase64, rawMask ?? newMaskBase64, updatedMasks)
+    precomputeMaskOutlines(updatedMasks)
+
+    // Exit editing mode, deselect
+    setEditing(false)
+    setSelectedMaskId(null)
+    setLineStart(null)
+    setLineEnd(null)
+  }, [lineStart, lineEnd, selectedMaskId, dimensions, masks, rawMask, setMasks])
 
   const isProcessing = processingRegions.size > 0
 
@@ -258,65 +417,80 @@ export function EditorScreen() {
       {/* ── Outer image area ─────────────────────────────────────────────── */}
       <div ref={outerRef} className="flex-1 relative overflow-hidden" onClick={handleOuterClick}>
 
-        {/* Loading overlay – covers outer area until canvas is drawn */}
         {!canvasReady && (
           <div className="absolute inset-0 bg-black flex items-center justify-center" style={{ zIndex: 50 }}>
             <div className="w-8 h-8 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
           </div>
         )}
 
-        {/* ── Contain-sized image box ─────────────────────────────────────
-            All image layers live here. The box is pixel-perfect "object-contain"
-            sized by the ResizeObserver above, so every layer shares the same
-            coordinate space as the canvas.                                   */}
+        {/* Image box */}
         <div
           ref={imageContainerRef}
           className="absolute overflow-hidden"
           style={{
             left: imgBox.x, top: imgBox.y, width: imgBox.w, height: imgBox.h,
-            cursor: hoveredMaskId !== null ? 'pointer' : 'default',
+            cursor: editing ? 'crosshair' : (hoveredMaskId !== null ? 'pointer' : 'default'),
           }}
           onClick={handleImageClick}
         >
-          {/* Base image canvas */}
           <ImageCanvas ref={canvasRef} onReady={() => setCanvasReady(true)} />
 
-          {/* Outline highlight (edge glow on hover/selection) */}
+          {/* Outline glow (selection) */}
           <canvas
             ref={overlayCanvasRef}
             className="absolute inset-0 w-full h-full pointer-events-none"
             style={{ zIndex: 10 }}
           />
 
-          {/* Debug overlays – all objectFit:fill to match canvas stretch */}
-          {debugFlags.showClean && (
-            <img
-              src={`${backendUrl}/debug-imgs/cleaned.png`}
-              className="absolute inset-0 w-full h-full pointer-events-none"
-              style={{ zIndex: 30, opacity: 0.55, objectFit: 'fill' }}
-              crossOrigin="anonymous"
-              alt="clean"
+          {/* Dim overlay (editing mode) */}
+          <canvas
+            ref={dimCanvasRef}
+            className="absolute inset-0 w-full h-full pointer-events-none"
+            style={{ zIndex: 15 }}
+          />
+
+          {/* Line editor canvas (editing mode, captures pointer events) */}
+          {editing && (
+            <canvas
+              ref={lineCanvasRef}
+              className="absolute inset-0 w-full h-full"
+              style={{ zIndex: 25 }}
+              onPointerDown={handleLinePointerDown}
+              onPointerMove={handleLinePointerMove}
+              onPointerUp={handleLinePointerUp}
+              onPointerCancel={handleLinePointerUp}
             />
           )}
-          {debugFlags.showRawMask && (
-            <img
-              src={`${backendUrl}/debug-imgs/mask_raw.png`}
+          {/* Line canvas kept in DOM but pointer-events off when not editing */}
+          {!editing && (
+            <canvas
+              ref={lineCanvasRef}
               className="absolute inset-0 w-full h-full pointer-events-none"
-              style={{ zIndex: 30, opacity: 0.65, objectFit: 'fill' }}
-              crossOrigin="anonymous"
-              alt="raw mask"
-            />
-          )}
-          {debugFlags.showRefinedMask && refinedMask && (
-            <img
-              src={`data:image/png;base64,${refinedMask}`}
-              className="absolute inset-0 w-full h-full pointer-events-none"
-              style={{ zIndex: 30, opacity: 0.65, objectFit: 'fill' }}
-              alt="refined mask"
+              style={{ zIndex: 25 }}
             />
           )}
 
-          {/* Processing shimmer – grayscale per-region while API call is in flight */}
+          {/* Debug overlays */}
+          {debugFlags.showClean && (
+            <img src={`${backendUrl}/debug-imgs/cleaned.png`}
+              className="absolute inset-0 w-full h-full pointer-events-none"
+              style={{ zIndex: 30, opacity: 0.55, objectFit: 'fill' }}
+              crossOrigin="anonymous" alt="clean" />
+          )}
+          {debugFlags.showRawMask && (
+            <img src={`${backendUrl}/debug-imgs/mask_raw.png`}
+              className="absolute inset-0 w-full h-full pointer-events-none"
+              style={{ zIndex: 30, opacity: 0.65, objectFit: 'fill' }}
+              crossOrigin="anonymous" alt="raw mask" />
+          )}
+          {debugFlags.showRefinedMask && refinedMask && (
+            <img src={`data:image/png;base64,${refinedMask}`}
+              className="absolute inset-0 w-full h-full pointer-events-none"
+              style={{ zIndex: 30, opacity: 0.65, objectFit: 'fill' }}
+              alt="refined mask" />
+          )}
+
+          {/* Processing shimmer */}
           <canvas
             ref={processingCanvasRef}
             className="absolute inset-0 w-full h-full pointer-events-none"
@@ -324,7 +498,7 @@ export function EditorScreen() {
           />
         </div>
 
-        {/* Debug panel – top-left of outer area */}
+        {/* Debug panel */}
         {false && <DebugPanel
           flags={debugFlags}
           onChange={setDebugFlags}
@@ -332,7 +506,7 @@ export function EditorScreen() {
           onPromptsChange={setDebugPrompts}
         />}
 
-        {/* Hover debug HUD – top-right, only when hoverHighlight is on */}
+        {/* Hover debug HUD */}
         {debugFlags.hoverHighlight && (() => {
           const hm = hoveredMaskId !== null ? masks.find(m => m.id === hoveredMaskId) : null
           return (
@@ -341,10 +515,8 @@ export function EditorScreen() {
               {hm ? (
                 <>
                   <div className="flex items-center gap-2 mb-1">
-                    <span
-                      className="w-3.5 h-3.5 rounded-sm flex-shrink-0 border border-white/20"
-                      style={{ background: `rgb(${hm.color[0]},${hm.color[1]},${hm.color[2]})` }}
-                    />
+                    <span className="w-3.5 h-3.5 rounded-sm flex-shrink-0 border border-white/20"
+                      style={{ background: `rgb(${hm.color[0]},${hm.color[1]},${hm.color[2]})` }} />
                     <span className="text-white font-semibold">{hm.label}</span>
                   </div>
                   <p className="text-gray-400">id: {hm.id}</p>
@@ -357,43 +529,77 @@ export function EditorScreen() {
           )
         })()}
 
-        {/* FAB – bottom-right of outer area */}
-        <button
-          onClick={() => setPhase('finalizing')}
-          disabled={isProcessing}
-          className={`absolute bottom-20 right-4 z-40 px-4 py-3 rounded-full font-bold text-white shadow-2xl transition-all ${
-            isProcessing
-              ? 'bg-gray-700 opacity-60 cursor-not-allowed'
-              : 'bg-gradient-to-r from-purple-600 to-blue-600 hover:scale-105 active:scale-95'
-          }`}
-        >
-          一键焕色
-        </button>
+        {/* ── Normal mode buttons ──────────────────────────────────────── */}
+        {!editing && (
+          <>
+            {/* FAB 一键焕色 */}
+            <button
+              onClick={() => setPhase('finalizing')}
+              disabled={isProcessing}
+              className={`absolute bottom-20 right-4 z-40 px-4 py-3 rounded-full font-bold text-white shadow-2xl transition-all ${
+                isProcessing
+                  ? 'bg-gray-700 opacity-60 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-purple-600 to-blue-600 hover:scale-105 active:scale-95'
+              }`}
+            >
+              一键焕色
+            </button>
 
-        {/* Edit button – bottom-left, shown when a mask is selected */}
-        {selectedMaskId !== null && (
+            {/* Edit button */}
+            {selectedMaskId !== null && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setEditing(true); setLineStart(null); setLineEnd(null) }}
+                className="absolute bottom-20 left-4 z-40 flex items-center gap-2 px-4 py-3 rounded-full font-bold text-white shadow-2xl bg-white/15 backdrop-blur-sm border border-white/20 hover:bg-white/25 active:scale-95 transition-all"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+                编辑
+              </button>
+            )}
+          </>
+        )}
+
+        {/* ── Editing mode: exit (top-left) ────────────────────────────── */}
+        {editing && (
           <button
-            onClick={(e) => e.stopPropagation()}
-            className="absolute bottom-20 left-4 z-40 flex items-center gap-2 px-4 py-3 rounded-full font-bold text-white shadow-2xl bg-white/15 backdrop-blur-sm border border-white/20 hover:bg-white/25 active:scale-95 transition-all"
+            onClick={(e) => { e.stopPropagation(); setEditing(false) }}
+            className="absolute top-4 left-4 z-50 flex items-center gap-1.5 px-3 py-2 rounded-full text-sm text-white bg-black/50 backdrop-blur-sm border border-white/15 hover:bg-black/70 active:scale-95 transition-all"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
-            编辑
+            退出编辑
           </button>
         )}
       </div>
 
-      {/* Material drawer */}
-      <MaterialDrawer
-        open={drawerOpen}
-        onToggle={() => setDrawerOpen(v => !v)}
-        onDragStart={handleDragStart}
-        onDragMove={handleDragMove}
-        onDragEnd={handleDragEnd}
-      />
+      {/* ── Editing mode bottom bar ───────────────────────────────────────── */}
+      {editing ? (
+        <div className="flex-none flex items-center justify-center px-6 py-4 bg-gray-900/80 backdrop-blur-sm border-t border-white/[0.06]">
+          <button
+            onClick={handleApply}
+            disabled={!lineStart || !lineEnd}
+            className={`px-10 py-3 rounded-full font-bold text-white shadow-xl transition-all ${
+              lineStart && lineEnd
+                ? 'bg-gradient-to-r from-blue-500 to-cyan-500 hover:scale-105 active:scale-95'
+                : 'bg-gray-700 opacity-50 cursor-not-allowed'
+            }`}
+          >
+            应用
+          </button>
+        </div>
+      ) : (
+        /* ── Normal mode: material drawer ─────────────────────────────── */
+        <MaterialDrawer
+          open={drawerOpen}
+          onToggle={() => setDrawerOpen(v => !v)}
+          onDragStart={handleDragStart}
+          onDragMove={handleDragMove}
+          onDragEnd={handleDragEnd}
+        />
+      )}
 
-      {/* Drag preview – follows finger/cursor */}
       {draggingMaterial && <DragPreview x={dragPos.x} y={dragPos.y} />}
     </div>
   )

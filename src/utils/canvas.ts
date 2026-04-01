@@ -461,6 +461,137 @@ export function drawProcessingShimmer(
   ctx.putImageData(outData, 0, 0)
 }
 
+/**
+ * Generate a random RGB color that doesn't collide with any existing mask color.
+ * Minimum Euclidean distance in RGB space: 80 units.
+ * Avoids near-black (< 28) and near-white (> 228) to stay clearly visible on the mask.
+ */
+function generateUniqueColor(
+  existingColors: [number, number, number][]
+): [number, number, number] {
+  const MIN_DIST_SQ = 80 * 80
+  for (let attempt = 0; attempt < 300; attempt++) {
+    const r = Math.floor(Math.random() * 200) + 28
+    const g = Math.floor(Math.random() * 200) + 28
+    const b = Math.floor(Math.random() * 200) + 28
+    let ok = true
+    for (const [er, eg, eb] of existingColors) {
+      if ((r - er) ** 2 + (g - eg) ** 2 + (b - eb) ** 2 < MIN_DIST_SQ) {
+        ok = false; break
+      }
+    }
+    if (ok) return [r, g, b]
+  }
+  // Extremely unlikely fallback
+  return [255, 128, 0]
+}
+
+/**
+ * Split a mask region in two using an infinite line (half-plane classification).
+ *
+ * Line is defined by (x1,y1)→(x2,y2) in mask-resolution image pixels.
+ * Pixels where cross(lineDir, pixel−lineStart) >= 0 → keep original color (side A).
+ * Pixels where cross < 0 → get a freshly generated unique color (side B).
+ *
+ * Modifies the offscreen canvas in-place and exports it as the new mask PNG.
+ * Returns null if the line doesn't actually split the mask (all pixels on one side),
+ * or if the canvas / hitAssignment is not ready.
+ */
+export function splitMaskByLine(
+  maskId: number,
+  x1: number, y1: number,
+  x2: number, y2: number,
+  existingMasks: MaskInfo[]
+): { newMaskBase64: string; newMask: MaskInfo } | null {
+  if (!offscreenCtx || !offscreenCanvas || !hitAssignment) return null
+
+  const mi = hitMasks.findIndex(m => m.id === maskId)
+  if (mi === -1) return null
+
+  const W  = offscreenCanvas.width
+  const H  = offscreenCanvas.height
+  const dx = x2 - x1
+  const dy = y2 - y1
+
+  const imgData = offscreenCtx.getImageData(0, 0, W, H)
+  const d       = imgData.data
+
+  // Count pixels on each side first to reject degenerate splits
+  let side2Count = 0, totalCount = 0
+  for (let py = 0; py < H; py++) {
+    for (let px = 0; px < W; px++) {
+      if (hitAssignment[py * W + px] !== mi) continue
+      totalCount++
+      if (dx * (py - y1) - dy * (px - x1) < 0) side2Count++
+    }
+  }
+  if (side2Count === 0 || side2Count === totalCount) return null
+
+  const newColor = generateUniqueColor(existingMasks.map(m => m.color))
+  const [nr, ng, nb] = newColor
+
+  // Second pass: paint side-B pixels
+  for (let py = 0; py < H; py++) {
+    for (let px = 0; px < W; px++) {
+      const i = py * W + px
+      if (hitAssignment[i] !== mi) continue
+      if (dx * (py - y1) - dy * (px - x1) < 0) {
+        d[i * 4]     = nr
+        d[i * 4 + 1] = ng
+        d[i * 4 + 2] = nb
+        d[i * 4 + 3] = 255
+      }
+    }
+  }
+
+  offscreenCtx.putImageData(imgData, 0, 0)
+
+  const newMaskBase64 = offscreenCanvas.toDataURL('image/png').split(',')[1]
+  const newId         = Math.max(...existingMasks.map(m => m.id)) + 1
+  const newMask: MaskInfo = {
+    id:    newId,
+    label: `${hitMasks[mi].label} B`,
+    color: newColor,
+  }
+
+  return { newMaskBase64, newMask }
+}
+
+/**
+ * Fills the canvas with a dark overlay, with the selected mask region kept
+ * transparent (smooth edge via bilinear-sampled smoothMask).
+ * Used to dim everything except the currently-selected wall in editing mode.
+ */
+export function drawMaskDim(maskId: number, canvas: HTMLCanvasElement): void {
+  const ctx = canvas.getContext('2d')!
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  const data = maskSDFs.get(maskId)
+  if (!data) return
+
+  const { smoothMask, w: sW, h: sH } = data
+  const dW = canvas.width
+  const dH = canvas.height
+  if (!dW || !dH) return
+  const scaleX = sW / dW
+  const scaleY = sH / dH
+
+  const outData = ctx.createImageData(dW, dH)
+  const od = outData.data
+
+  for (let dy = 0; dy < dH; dy++) {
+    for (let dx = 0; dx < dW; dx++) {
+      const maskAlpha = sampleBilinear(smoothMask, sW, sH, dx * scaleX, dy * scaleY) / 255
+      const dimAlpha = Math.round((1 - maskAlpha) * 0.65 * 255)
+      if (dimAlpha === 0) continue
+      const di = (dy * dW + dx) * 4
+      // rgb stays 0 (black); only set alpha
+      od[di + 3] = dimAlpha
+    }
+  }
+
+  ctx.putImageData(outData, 0, 0)
+}
+
 export function initOffscreenCanvas(width: number, height: number) {
   offscreenCanvas = document.createElement('canvas')
   offscreenCanvas.width = width
