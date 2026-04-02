@@ -1,7 +1,9 @@
 import os
 import sys
+import asyncio
 import base64
 import io
+import numpy as np
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -74,7 +76,7 @@ def snap_to_64(w: int, h: int, target: int = 1024) -> tuple[int, int]:
     return max(nw, 64), max(nh, 64)
 
 
-def call_flux2(prompt: str, images: list[Image.Image]) -> Image.Image:
+async def call_flux2(prompt: str, images: list[Image.Image]) -> Image.Image:
     """
     Call self-hosted Flux2 Klein /edit-multi endpoint.
     Sends images as multipart files, returns a PIL Image (PNG).
@@ -94,8 +96,8 @@ def call_flux2(prompt: str, images: list[Image.Image]) -> Image.Image:
 
     data = {"prompts": prompt, "width": str(w), "height": str(h)}
 
-    with httpx.Client(timeout=180, verify=False) as client:
-        resp = client.post(FLUX2_API, files=files, data=data)
+    async with httpx.AsyncClient(timeout=180, verify=False) as client:
+        resp = await client.post(FLUX2_API, files=files, data=data)
         resp.raise_for_status()
 
     img = Image.open(io.BytesIO(resp.content))
@@ -103,7 +105,7 @@ def call_flux2(prompt: str, images: list[Image.Image]) -> Image.Image:
     return img
 
 
-def call_sam3_remote(image: Image.Image, prompts: list[str], confidence: float = 0.3) -> dict:
+async def call_sam3_remote(image: Image.Image, prompts: list[str], confidence: float = 0.3) -> dict:
     """Call remote SAM3 API and return masks + mask image."""
     print(f"[sam3-remote] calling API with prompts={prompts}, confidence={confidence}")
 
@@ -119,8 +121,8 @@ def call_sam3_remote(image: Image.Image, prompts: list[str], confidence: float =
         "confidence": str(confidence),
     }
 
-    with httpx.Client(timeout=120, verify=False) as client:
-        resp = client.post(SAM3_API, files=files, data=data)
+    async with httpx.AsyncClient(timeout=120, verify=False) as client:
+        resp = await client.post(SAM3_API, files=files, data=data)
         resp.raise_for_status()
         result = resp.json()
 
@@ -138,6 +140,48 @@ def call_sam3_remote(image: Image.Image, prompts: list[str], confidence: float =
 
     print(f"[sam3-remote] received {len(masks)} masks")
     return {"masks": masks, "mask_only_b64": mask_b64}
+
+
+def composite_regions(
+    base: Image.Image,
+    mask: Image.Image,
+    region_colors: list[list[int]],
+    region_results: list[Image.Image],
+    feather_radius: int = 3,
+) -> Image.Image:
+    """
+    Composite multiple region results onto base using mask colours.
+    For each pixel whose mask colour matches a region, copy from that region's
+    result image. Feather edges with a Gaussian blur on per-region alpha masks.
+    """
+    w, h = base.size
+    mask_resized = mask.resize((w, h), Image.NEAREST) if mask.size != (w, h) else mask
+    mask_arr = np.array(mask_resized.convert("RGB"))  # (H, W, 3)
+    out = np.array(base.convert("RGBA"))
+
+    tolerance = 15
+
+    for colors, result_img in zip(region_colors, region_results):
+        result_resized = result_img.resize((w, h), Image.LANCZOS) if result_img.size != (w, h) else result_img
+        result_arr = np.array(result_resized.convert("RGBA"))
+
+        # Build binary mask for this region
+        tc = np.array(colors, dtype=np.int16)
+        diff = np.abs(mask_arr.astype(np.int16) - tc)
+        region_mask = np.all(diff <= tolerance, axis=2)  # (H, W) bool
+
+        # Feather edges: convert bool mask to float alpha, blur, then blend
+        alpha = region_mask.astype(np.float32)
+        if feather_radius > 0:
+            alpha_img = Image.fromarray((alpha * 255).astype(np.uint8), mode="L")
+            alpha_img = alpha_img.filter(ImageFilter.GaussianBlur(radius=feather_radius))
+            alpha = np.array(alpha_img).astype(np.float32) / 255.0
+
+        # Blend: out = result * alpha + out * (1 - alpha)
+        a3 = alpha[:, :, np.newaxis]
+        out = (result_arr * a3 + out * (1 - a3)).astype(np.uint8)
+
+    return Image.fromarray(out)
 
 
 # ── Request / Response models ─────────────────────────────────────────────────
@@ -171,6 +215,34 @@ class FinalizeRequest(BaseModel):
     promptFinalize: str = "realistic render"
 
 
+# ── V2 models ────────────────────────────────────────────────────────────────
+
+DEFAULT_PROMPT_REFINE = "Remove all black outlines and black boundary lines between color regions. Make each colored area fill seamlessly to their edges without any black gaps, borders, or outlines. The result should have clean, sharp color boundaries where colors meet directly with no black separation lines."
+
+class SegmentRequest(BaseModel):
+    image: str                          # raw base64
+    promptEnhance: str = "Realistic render"
+    promptClean: str = "empty room"
+    promptRefine: str = DEFAULT_PROMPT_REFINE
+
+class RegionItem(BaseModel):
+    maskColor: list[int]                # [R, G, B] matching mask colour
+    materialImage: str                  # raw base64 of material texture
+    prompt: str = "based on image 2, change all wall material in image 1."
+
+class CoordRegionItem(BaseModel):
+    x: int                              # pixel X on original image
+    y: int                              # pixel Y on original image
+    referenceImage: str                 # raw base64 of material texture
+    prompt: str = "based on image 2, change all wall material in image 1."
+
+class RenderRequest(BaseModel):
+    image: str                          # raw base64 (original / enhanced)
+    refinedMask: str                    # raw base64 PNG from /api/v2/segment
+    items: list[CoordRegionItem]        # click point + reference image + prompt
+    promptFinalize: str = "realistic render"
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -192,7 +264,7 @@ def get_materials():
 
 
 @app.post("/enhance")
-def enhance(req: ProcessUploadRequest):
+async def enhance(req: ProcessUploadRequest):
     """Step 1: Light blur + Flux 'Realistic render' → returns enhanced image for display."""
     original = base64_to_image(req.image)
     original = ImageOps.exif_transpose(original)
@@ -202,7 +274,7 @@ def enhance(req: ProcessUploadRequest):
     print(f"[enhance] input size={original.size} mode={original.mode}")
 
     blurred = original.filter(ImageFilter.GaussianBlur(radius=0.5))
-    enhanced = call_flux2(req.promptEnhance, [blurred])
+    enhanced = await call_flux2(req.promptEnhance, [blurred])
     enhanced.save(DEBUG_DIR / "enhanced.png")
     print(f"[enhance] done size={enhanced.size}")
 
@@ -210,18 +282,18 @@ def enhance(req: ProcessUploadRequest):
 
 
 @app.post("/process-masks")
-def process_masks(req: ProcessMasksRequest):
+async def process_masks(req: ProcessMasksRequest):
     """Steps 2-4: Flux2 clean → remote SAM3 → Flux2 refine → returns masks."""
     enhanced = base64_to_image(req.enhancedImage)
     print(f"[process-masks] input size={enhanced.size}")
 
     # Step 2: Flux2 clean
-    cleaned = call_flux2(req.promptClean, [enhanced])
+    cleaned = await call_flux2(req.promptClean, [enhanced])
     cleaned.save(DEBUG_DIR / "cleaned.png")
     print(f"[process-masks] cleaned size={cleaned.size}")
 
     # Step 3: Remote SAM3 segmentation
-    seg = call_sam3_remote(
+    seg = await call_sam3_remote(
         image=cleaned,
         prompts=["wall"],
         confidence=0.3,
@@ -233,7 +305,7 @@ def process_masks(req: ProcessMasksRequest):
     mask_img.save(DEBUG_DIR / "mask_raw.png")
 
     # Step 4: Flux2 refine mask
-    refined = call_flux2(req.promptRefine, [mask_img])
+    refined = await call_flux2(req.promptRefine, [mask_img])
     refined.save(DEBUG_DIR / "mask_refined.png")
 
     return {
@@ -244,22 +316,22 @@ def process_masks(req: ProcessMasksRequest):
 
 
 @app.post("/process-upload")
-def process_upload(req: ProcessUploadRequest):
+async def process_upload(req: ProcessUploadRequest):
     """Legacy single-call endpoint — calls enhance + process_masks internally."""
-    enh = enhance(req)
+    enh = await enhance(req)
     masks_req = ProcessMasksRequest(enhancedImage=enh["enhancedImage"])
-    result = process_masks(masks_req)
+    result = await process_masks(masks_req)
     return {**enh, **result, "width": req.width, "height": req.height}
 
 
 @app.post("/debug-segment")
-def debug_segment(req: DebugSegmentRequest):
+async def debug_segment(req: DebugSegmentRequest):
     """Debug mode: skip enhance/clean/refine, just run SAM3 on original image."""
     original = base64_to_image(req.image)
     original = ImageOps.exif_transpose(original)
     print(f"[debug-segment] input size={original.size}")
 
-    seg = call_sam3_remote(
+    seg = await call_sam3_remote(
         image=original,
         prompts=["wall"],
         confidence=0.3,
@@ -279,7 +351,7 @@ def debug_segment(req: DebugSegmentRequest):
 
 
 @app.post("/apply-material")
-def apply_material(req: ApplyMaterialRequest):
+async def apply_material(req: ApplyMaterialRequest):
     original = base64_to_image(req.originalImage)
 
     material_path = MATERIALS_DIR / req.materialFilename
@@ -288,7 +360,7 @@ def apply_material(req: ApplyMaterialRequest):
 
     material = Image.open(material_path)
 
-    result_img = call_flux2(
+    result_img = await call_flux2(
         req.promptApplyMaterial,
         [original, material],
     )
@@ -299,10 +371,108 @@ def apply_material(req: ApplyMaterialRequest):
 
 
 @app.post("/finalize")
-def finalize(req: FinalizeRequest):
+async def finalize(req: FinalizeRequest):
     composite = base64_to_image(req.compositeImage)
     blurred = composite.filter(ImageFilter.GaussianBlur(radius=1))
 
-    final_img = call_flux2(req.promptFinalize, [blurred])
+    final_img = await call_flux2(req.promptFinalize, [blurred])
+
+    return {"finalImage": image_to_base64(final_img, "PNG")}
+
+
+# ── V2 Endpoints (headless pipeline) ────────────────────────────────────────
+
+@app.post("/api/v2/segment")
+async def v2_segment(req: SegmentRequest):
+    """
+    Headless pipeline step 1:
+    Upload image → enhance → clean → SAM3 → refine → return masks.
+    """
+    # Decode & normalise
+    original = base64_to_image(req.image)
+    original = ImageOps.exif_transpose(original)
+    print(f"[v2/segment] input size={original.size}")
+
+    # Enhance
+    blurred = original.filter(ImageFilter.GaussianBlur(radius=0.5))
+    enhanced = await call_flux2(req.promptEnhance, [blurred])
+    enhanced.save(DEBUG_DIR / "enhanced.png")
+
+    # Clean
+    cleaned = await call_flux2(req.promptClean, [enhanced])
+    cleaned.save(DEBUG_DIR / "cleaned.png")
+
+    # SAM3 segment
+    seg = await call_sam3_remote(image=cleaned, prompts=["wall"], confidence=0.3)
+    masks = seg["masks"]
+    mask_img = base64_to_image(seg["mask_only_b64"])
+    mask_img.save(DEBUG_DIR / "mask_raw.png")
+
+    # Refine mask
+    refined = await call_flux2(req.promptRefine, [mask_img])
+    refined.save(DEBUG_DIR / "mask_refined.png")
+
+    return {
+        "enhancedImage": image_to_base64(enhanced, "JPEG"),
+        "refinedMask": image_to_base64(refined, "PNG"),
+        "rawMask": image_to_base64(mask_img, "PNG"),
+        "masks": masks,
+    }
+
+
+@app.post("/api/v2/render")
+async def v2_render(req: RenderRequest):
+    """
+    Headless pipeline step 2:
+    Upload image + list of {x, y, referenceImage, prompt} →
+    resolve each (x,y) to a mask colour → parallel apply materials →
+    composite → finalize → return final image.
+    """
+    base_img = base64_to_image(req.image)
+    mask_img = base64_to_image(req.refinedMask)
+    print(f"[v2/render] base={base_img.size}  items={len(req.items)}")
+
+    # Resolve each click point to the mask colour at that pixel
+    mask_rgb = mask_img.convert("RGB")
+    mask_w, mask_h = mask_rgb.size
+    base_w, base_h = base_img.size
+
+    def sample_mask_color(x: int, y: int) -> list[int]:
+        # Scale coordinate from base image space to mask image space
+        mx = round(x * mask_w / base_w)
+        my = round(y * mask_h / base_h)
+        mx = max(0, min(mx, mask_w - 1))
+        my = max(0, min(my, mask_h - 1))
+        r, g, b = mask_rgb.getpixel((mx, my))
+        return [r, g, b]
+
+    # Deduplicate: multiple points on the same colour only generate one call
+    # Use the last item's prompt/referenceImage for a given colour
+    color_key: dict[tuple, CoordRegionItem] = {}
+    for item in req.items:
+        color = tuple(sample_mask_color(item.x, item.y))
+        color_key[color] = item
+        print(f"[v2/render] ({item.x},{item.y}) → mask colour {color}")
+
+    # Parallel apply-material for each unique region
+    async def apply_one(color: tuple, item: CoordRegionItem) -> tuple[list[int], Image.Image]:
+        mat = base64_to_image(item.referenceImage)
+        result = await call_flux2(item.prompt, [base_img, mat])
+        return list(color), result
+
+    tasks = [apply_one(c, it) for c, it in color_key.items()]
+    results = await asyncio.gather(*tasks)
+
+    region_colors = [r[0] for r in results]
+    region_results = [r[1] for r in results]
+
+    # Composite all regions onto base
+    composited = composite_regions(base_img, mask_img, region_colors, region_results)
+    composited.save(DEBUG_DIR / "v2_composite.png")
+
+    # Finalize
+    blurred = composited.filter(ImageFilter.GaussianBlur(radius=1))
+    final_img = await call_flux2(req.promptFinalize, [blurred])
+    final_img.save(DEBUG_DIR / "v2_final.png")
 
     return {"finalImage": image_to_base64(final_img, "PNG")}
