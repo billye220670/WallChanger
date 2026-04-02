@@ -184,7 +184,78 @@ def composite_regions(
     return Image.fromarray(out)
 
 
+def generate_unique_color(
+    existing: list[list[int]],
+    min_dist: int = 80,
+    lo: int = 28,
+    hi: int = 228,
+    max_tries: int = 300,
+) -> list[int]:
+    """
+    Generate a random RGB colour that is at least `min_dist` (Euclidean, RGB space)
+    away from every colour in `existing`. Values are drawn from [lo, hi).
+    Falls back to [255, 128, 0] (orange) if no candidate is found within `max_tries`.
+    """
+    import random
+    for _ in range(max_tries):
+        c = [random.randint(lo, hi - 1) for _ in range(3)]
+        if all(
+            sum((c[i] - e[i]) ** 2 for i in range(3)) ** 0.5 >= min_dist
+            for e in existing
+        ):
+            return c
+    return [255, 128, 0]
+
+
+def split_mask_by_line(
+    mask_arr: np.ndarray,
+    target_color: list[int],
+    x1: int, y1: int,
+    x2: int, y2: int,
+    existing_colors: list[list[int]],
+    tolerance: int = 15,
+) -> tuple[np.ndarray, list[int]] | None:
+    """
+    Split pixels matching `target_color` in `mask_arr` (H×W×3 uint8) using a
+    half-plane defined by the directed line (x1,y1)→(x2,y2).
+
+    Cross product  dx*(py-y1) - dy*(px-x1):
+      >= 0  → side A: keep target_color
+      <  0  → side B: recolor to new_color
+
+    Returns (updated_arr, new_color) or None if the line doesn't split the region
+    (all pixels fall on the same side).
+    """
+    tc = np.array(target_color, dtype=np.int16)
+    diff = np.abs(mask_arr.astype(np.int16) - tc)
+    region_mask = np.all(diff <= tolerance, axis=2)   # (H, W) bool
+
+    if not region_mask.any():
+        return None
+
+    h, w = mask_arr.shape[:2]
+    ys, xs = np.where(region_mask)
+
+    dx = x2 - x1
+    dy = y2 - y1
+    cross = dx * (ys.astype(np.int64) - y1) - dy * (xs.astype(np.int64) - x1)
+
+    side_b = cross < 0
+    if not side_b.any() or side_b.all():
+        return None   # degenerate — line doesn't split the region
+
+    new_color = generate_unique_color(existing_colors)
+
+    result = mask_arr.copy()
+    b_ys = ys[side_b]
+    b_xs = xs[side_b]
+    result[b_ys, b_xs] = new_color
+
+    return result, new_color
+
+
 # ── Request / Response models ─────────────────────────────────────────────────
+
 
 class ProcessUploadRequest(BaseModel):
     image: str      # raw base64 (no data URI prefix)
@@ -241,6 +312,15 @@ class RenderRequest(BaseModel):
     refinedMask: str                    # raw base64 PNG from /api/v2/segment
     items: list[CoordRegionItem]        # click point + reference image + prompt
     promptFinalize: str = "realistic render"
+
+class SplitMaskRequest(BaseModel):
+    maskImage: str                      # raw base64 PNG — current refined mask
+    targetColor: list[int]             # [R, G, B] — which region to split
+    x1: int                            # line start X (mask image pixel coords)
+    y1: int                            # line start Y
+    x2: int                            # line end X
+    y2: int                            # line end Y
+    existingColors: list[list[int]] = []  # all current mask colours (for collision avoidance)
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -476,3 +556,44 @@ async def v2_render(req: RenderRequest):
     final_img.save(DEBUG_DIR / "v2_final.png")
 
     return {"finalImage": image_to_base64(final_img, "PNG")}
+
+
+@app.post("/api/v2/split-mask")
+def v2_split_mask(req: SplitMaskRequest):
+    """
+    Split one mask region into two sub-regions using a directed line.
+
+    The line (x1,y1)→(x2,y2) divides the target region via half-plane
+    classification (cross product). Side A keeps targetColor; side B gets a
+    newly generated colour that avoids collision with existingColors.
+
+    Returns the updated mask image and the new colour assigned to side B.
+    Returns 422 if the line doesn't actually split the region.
+    """
+    mask_img = base64_to_image(req.maskImage).convert("RGB")
+    mask_arr = np.array(mask_img)
+
+    all_colors = list(req.existingColors) or [req.targetColor]
+    result = split_mask_by_line(
+        mask_arr,
+        req.targetColor,
+        req.x1, req.y1,
+        req.x2, req.y2,
+        all_colors,
+    )
+
+    if result is None:
+        raise HTTPException(
+            422,
+            detail="Line does not split the target region — all pixels fall on the same side, or target colour not found in mask.",
+        )
+
+    updated_arr, new_color = result
+    updated_img = Image.fromarray(updated_arr.astype(np.uint8))
+    updated_img.save(DEBUG_DIR / "v2_split_mask.png")
+
+    print(f"[v2/split-mask] target={req.targetColor} → new={new_color}")
+    return {
+        "maskImage": image_to_base64(updated_img, "PNG"),
+        "newColor": new_color,
+    }
