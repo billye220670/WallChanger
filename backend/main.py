@@ -9,13 +9,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from PIL import Image, ImageFilter, ImageOps
 from dotenv import load_dotenv
-import fal_client
 import httpx
 
 load_dotenv()
 
 # ── SAM3 remote API ──────────────────────────────────────────────────────────
 SAM3_API = os.getenv("SAM3_API", "https://sh-llm-api.tinttex.cn:8443/sam3/segment")
+
+# ── Flux2 Klein API ──────────────────────────────────────────────────────────
+FLUX2_API = os.getenv("FLUX2_API", "https://sh-llm-api.tinttex.cn:8443/flux2-klein/edit-multi")
 
 # ── Materials path ───────────────────────────────────────────────────────────
 # Relative to this file's directory (backend/) → ../public/materials
@@ -64,61 +66,41 @@ def image_to_base64(img: Image.Image, fmt: str = "PNG") -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
-def download_url(url: str) -> bytes:
-    with httpx.Client(timeout=120) as client:
-        r = client.get(url)
-        r.raise_for_status()
-        return r.content
+def snap_to_64(w: int, h: int, target: int = 1024) -> tuple[int, int]:
+    """Scale (w, h) so the longer side ≈ target, both sides multiples of 64."""
+    scale = target / max(w, h)
+    nw = round(w * scale / 64) * 64
+    nh = round(h * scale / 64) * 64
+    return max(nw, 64), max(nh, 64)
 
 
-
-def call_flux(prompt: str, image_uris: list[str]) -> Image.Image:
+def call_flux2(prompt: str, images: list[Image.Image]) -> Image.Image:
     """
-    Call Flux Klein 9B and return a PIL Image.
-    fal_client reads FAL_KEY from the environment automatically.
-    No image_size passed — fal auto-uses input image dimensions.
+    Call self-hosted Flux2 Klein /edit-multi endpoint.
+    Sends images as multipart files, returns a PIL Image (PNG).
+    Width/height are auto-calculated from the first image (aspect-preserving,
+    long side ≈ 1024, both sides aligned to 64).
     """
-    print(f"[flux] calling fal API  prompt='{prompt[:60]}...'")
-    result = fal_client.subscribe(
-        "fal-ai/flux-2/klein/9b/edit/lora",
-        arguments={
-            "prompt": prompt,
-            "image_urls": image_uris,
-            "num_images": 1,
-            "output_format": "png",
-        },
-    )
-    image_url = result["images"][0]["url"]
-    raw = download_url(image_url)
-    img = Image.open(io.BytesIO(raw))
-    print(f"[flux] received {img.size} mode={img.mode}")
+    ref = images[0]
+    w, h = snap_to_64(ref.width, ref.height)
+    print(f"[flux2] calling API  prompt='{prompt[:60]}...'  images={len(images)}  size={w}x{h}")
+
+    files = []
+    for i, img in enumerate(images):
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        files.append(("images", (f"image_{i}.png", buf, "image/png")))
+
+    data = {"prompts": prompt, "width": str(w), "height": str(h)}
+
+    with httpx.Client(timeout=180, verify=False) as client:
+        resp = client.post(FLUX2_API, files=files, data=data)
+        resp.raise_for_status()
+
+    img = Image.open(io.BytesIO(resp.content))
+    print(f"[flux2] received {img.size} mode={img.mode}")
     return img
-
-
-def call_seedream(prompt: str, image_uris: list[str]) -> Image.Image:
-    """
-    Call Seedream v5 lite and return a PIL Image.
-    fal_client reads FAL_KEY from the environment automatically.
-    """
-    print(f"[seedream] calling fal API  prompt='{prompt[:60]}...'")
-    result = fal_client.subscribe(
-        "fal-ai/bytedance/seedream/v5/lite/edit",
-        arguments={
-            "prompt": prompt,
-            "image_urls": image_uris,
-            "num_images": 1,
-        },
-    )
-    image_url = result["images"][0]["url"]
-    raw = download_url(image_url)
-    img = Image.open(io.BytesIO(raw))
-    print(f"[seedream] received {img.size} mode={img.mode}")
-    return img
-
-
-def pil_to_data_uri(img: Image.Image, fmt: str = "JPEG") -> str:
-    mime = "image/png" if fmt == "PNG" else "image/jpeg"
-    return f"data:{mime};base64,{image_to_base64(img, fmt)}"
 
 
 def call_sam3_remote(image: Image.Image, prompts: list[str], confidence: float = 0.3) -> dict:
@@ -220,7 +202,7 @@ def enhance(req: ProcessUploadRequest):
     print(f"[enhance] input size={original.size} mode={original.mode}")
 
     blurred = original.filter(ImageFilter.GaussianBlur(radius=0.5))
-    enhanced = call_flux(req.promptEnhance, [pil_to_data_uri(blurred)])
+    enhanced = call_flux2(req.promptEnhance, [blurred])
     enhanced.save(DEBUG_DIR / "enhanced.png")
     print(f"[enhance] done size={enhanced.size}")
 
@@ -229,12 +211,12 @@ def enhance(req: ProcessUploadRequest):
 
 @app.post("/process-masks")
 def process_masks(req: ProcessMasksRequest):
-    """Steps 2-4: Seedream clean → remote SAM3 → Seedream refine → returns masks."""
+    """Steps 2-4: Flux2 clean → remote SAM3 → Flux2 refine → returns masks."""
     enhanced = base64_to_image(req.enhancedImage)
     print(f"[process-masks] input size={enhanced.size}")
 
-    # Step 2: Seedream clean
-    cleaned = call_seedream(req.promptClean, [pil_to_data_uri(enhanced)])
+    # Step 2: Flux2 clean
+    cleaned = call_flux2(req.promptClean, [enhanced])
     cleaned.save(DEBUG_DIR / "cleaned.png")
     print(f"[process-masks] cleaned size={cleaned.size}")
 
@@ -250,8 +232,8 @@ def process_masks(req: ProcessMasksRequest):
     mask_img = base64_to_image(seg["mask_only_b64"])
     mask_img.save(DEBUG_DIR / "mask_raw.png")
 
-    # Step 4: Seedream refine — send as PNG (lossless) to avoid JPEG noise at input
-    refined = call_seedream(req.promptRefine, [pil_to_data_uri(mask_img, "PNG")])
+    # Step 4: Flux2 refine mask
+    refined = call_flux2(req.promptRefine, [mask_img])
     refined.save(DEBUG_DIR / "mask_refined.png")
 
     return {
@@ -306,9 +288,9 @@ def apply_material(req: ApplyMaterialRequest):
 
     material = Image.open(material_path)
 
-    result_img = call_flux(
+    result_img = call_flux2(
         req.promptApplyMaterial,
-        [pil_to_data_uri(original), pil_to_data_uri(material)],
+        [original, material],
     )
 
     result_img.save(DEBUG_DIR / "apply_material_result.png")
@@ -321,6 +303,6 @@ def finalize(req: FinalizeRequest):
     composite = base64_to_image(req.compositeImage)
     blurred = composite.filter(ImageFilter.GaussianBlur(radius=1))
 
-    final_img = call_flux(req.promptFinalize, [pil_to_data_uri(blurred)])
+    final_img = call_flux2(req.promptFinalize, [blurred])
 
     return {"finalImage": image_to_base64(final_img, "PNG")}
