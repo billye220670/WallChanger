@@ -1,12 +1,16 @@
 import { useEffect, useState } from 'react'
 import { useStore } from '../store'
-import { enhanceImage, processMasks, setBackendUrl } from '../utils/api'
+import { enhanceImage, processMasks, debugSegment, setBackendUrl } from '../utils/api'
 
 const STEPS = [
   '增强原图',
   '清理场景',
   '识别区域',
   '精炼蒙版',
+]
+
+const DEBUG_STEPS = [
+  '识别区域',
 ]
 
 async function waitForModel(url: string, onStatusChange: (msg: string) => void, signal: { ignore: boolean }): Promise<void> {
@@ -36,6 +40,7 @@ export function ProcessingScreen() {
     processingStep,
     backendUrl,
     debugPrompts,
+    debugMode,
     setProcessingStep,
     setOriginalImage,
     setMasks,
@@ -53,26 +58,34 @@ export function ProcessingScreen() {
 
     async function run() {
       try {
-        // Step 0: wait until SAM3 is ready
-        setProcessingStep(0)
-        setWaitingMsg('SAM3 模型加载中...')
-        await waitForModel(backendUrl, setWaitingMsg, signal)
-        if (signal.ignore) return
-        setWaitingMsg(null)
+        if (debugMode) {
+          // Debug mode: skip preprocessing, just SAM3
+          setProcessingStep(1)
+          const result = await debugSegment(originalImage!)
+          if (signal.ignore) return
+          setProcessingStep(4)
+          setMasks(result.refinedMask, result.rawMask, result.masks)
+          setTimeout(() => setPhase('editing'), 300)
+        } else {
+          // Normal mode: full pipeline
+          setProcessingStep(0)
+          setWaitingMsg('SAM3 模型加载中...')
+          await waitForModel(backendUrl, setWaitingMsg, signal)
+          if (signal.ignore) return
+          setWaitingMsg(null)
 
-        // Step 1: Enhance original image
-        setProcessingStep(1)
-        const enh = await enhanceImage(originalImage!, dimensions.width, dimensions.height, debugPrompts.enhance)
-        if (signal.ignore) return
-        setOriginalImage(enh.enhancedImage, dimensions.width, dimensions.height)
+          setProcessingStep(1)
+          const enh = await enhanceImage(originalImage!, dimensions.width, dimensions.height, debugPrompts.enhance)
+          if (signal.ignore) return
+          setOriginalImage(enh.enhancedImage, dimensions.width, dimensions.height)
 
-        // Steps 2-4: Clean scene → segment → refine mask
-        setProcessingStep(2)
-        const result = await processMasks(enh.enhancedImage, debugPrompts.clean, debugPrompts.refine)
-        if (signal.ignore) return
-        setProcessingStep(4)
-        setMasks(result.refinedMask, result.rawMask, result.masks)
-        setTimeout(() => setPhase('editing'), 300)
+          setProcessingStep(2)
+          const result = await processMasks(enh.enhancedImage, debugPrompts.clean, debugPrompts.refine)
+          if (signal.ignore) return
+          setProcessingStep(4)
+          setMasks(result.refinedMask, result.rawMask, result.masks)
+          setTimeout(() => setPhase('editing'), 300)
+        }
       } catch (err) {
         if (signal.ignore) return
         console.error('Processing failed:', err)
@@ -101,7 +114,9 @@ export function ProcessingScreen() {
 
       {/* Progress UI */}
       <div className="relative z-10 w-full max-w-sm px-6">
-        <h2 className="text-white text-center text-lg font-semibold mb-8">AI 分析中...</h2>
+        <h2 className="text-white text-center text-lg font-semibold mb-8">
+          {debugMode ? 'SAM3 识别中...' : 'AI 分析中...'}
+        </h2>
 
         {/* Model waiting state */}
         {waitingMsg && (
@@ -112,7 +127,7 @@ export function ProcessingScreen() {
         )}
 
         <div className="space-y-4">
-          {STEPS.map((label, index) => {
+          {(debugMode ? DEBUG_STEPS : STEPS).map((label, index) => {
             const stepNum = index + 1
             const isCompleted = processingStep > stepNum
             const isActive = processingStep === stepNum && !waitingMsg

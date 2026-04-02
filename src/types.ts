@@ -52,4 +52,5 @@ export interface AppState {
   // Config
   backendUrl: string
   debugPrompts: DebugPrompts
+  debugMode: boolean
 }

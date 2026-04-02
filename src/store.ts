@@ -16,6 +16,7 @@ interface AppStore extends AppState {
   setHoveredMaskId: (id: number | null) => void
   setBackendUrl: (url: string) => void
   setDebugPrompts: (prompts: DebugPrompts) => void
+  setDebugMode: (enabled: boolean) => void
   loadExample: (originalImage: string, width: number, height: number, refinedMask: string, rawMask: string, masks: MaskInfo[]) => void
   reset: () => void
 }
@@ -46,6 +47,7 @@ const initialState: AppState = {
   hoveredMaskId: null,
   backendUrl: savedBackendUrl,
   debugPrompts: loadSavedPrompts(),
+  debugMode: localStorage.getItem('debugMode') === 'true',
 }
 
 export const useStore = create<AppStore>((set, get) => ({
@@ -101,6 +103,11 @@ export const useStore = create<AppStore>((set, get) => ({
   setDebugPrompts: (debugPrompts) => {
     localStorage.setItem('debugPrompts', JSON.stringify(debugPrompts))
     set({ debugPrompts })
+  },
+
+  setDebugMode: (debugMode) => {
+    localStorage.setItem('debugMode', String(debugMode))
+    set({ debugMode })
   },
 
   loadExample: (originalImage, width, height, refinedMask, rawMask, masks) => set({

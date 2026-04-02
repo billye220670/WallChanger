@@ -67,6 +67,24 @@ export async function processUpload(
   return resp.json()
 }
 
+export async function debugSegment(
+  image: string,
+): Promise<{ refinedMask: string; rawMask: string; masks: MaskInfo[] }> {
+  const resp = await fetch(`${backendUrl}/debug-segment`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image }),
+  })
+  if (!resp.ok) {
+    const text = await resp.text()
+    console.error('[debug-segment] error response:', resp.status, text)
+    throw new Error(`Debug segment failed: ${resp.status} — ${text}`)
+  }
+  const data = await resp.json()
+  console.log('[debug-segment] success:', { masksCount: data.masks?.length, masks: data.masks })
+  return data
+}
+
 export async function applyMaterial(
   originalImage: string,
   materialFilename: string,

@@ -14,10 +14,8 @@ import httpx
 
 load_dotenv()
 
-# ── SAM3 local import ─────────────────────────────────────────────────────────
-sam3d_path = os.getenv("SAM3D_PATH", "C:/Users/Tintt/Documents/SAM3D")
-sys.path.insert(0, sam3d_path)
-from app import init_model, segment_image   # noqa: E402
+# ── SAM3 remote API ──────────────────────────────────────────────────────────
+SAM3_API = os.getenv("SAM3_API", "https://sh-llm-api.tinttex.cn:8443/sam3/segment")
 
 # ── Materials path ───────────────────────────────────────────────────────────
 # Relative to this file's directory (backend/) → ../public/materials
@@ -46,18 +44,7 @@ DEBUG_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/debug-imgs", StaticFiles(directory=str(DEBUG_DIR)), name="debug_imgs")
 
 # ── Model loading ─────────────────────────────────────────────────────────────
-_model_loaded = False
-
-@app.on_event("startup")
-async def startup_event():
-    global _model_loaded
-    try:
-        init_model()
-        _model_loaded = True
-        print("SAM3 model loaded successfully")
-    except Exception as e:
-        print(f"Warning: SAM3 model failed to load: {e}")
-        _model_loaded = False
+_model_loaded = True  # Remote API, always ready
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -134,6 +121,43 @@ def pil_to_data_uri(img: Image.Image, fmt: str = "JPEG") -> str:
     return f"data:{mime};base64,{image_to_base64(img, fmt)}"
 
 
+def call_sam3_remote(image: Image.Image, prompts: list[str], confidence: float = 0.3) -> dict:
+    """Call remote SAM3 API and return masks + mask image."""
+    print(f"[sam3-remote] calling API with prompts={prompts}, confidence={confidence}")
+
+    # Convert PIL to bytes
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    buf.seek(0)
+
+    # Build multipart form
+    files = {"image": ("image.png", buf, "image/png")}
+    data = {
+        "prompts": ",".join(prompts),
+        "confidence": str(confidence),
+    }
+
+    with httpx.Client(timeout=120, verify=False) as client:
+        resp = client.post(SAM3_API, files=files, data=data)
+        resp.raise_for_status()
+        result = resp.json()
+
+    # Convert hex string to base64 PNG
+    hex_str = result["mask_base64"]
+    if not hex_str:
+        raise HTTPException(500, detail="SAM3 returned empty mask - no segments detected")
+
+    png_bytes = bytes.fromhex(hex_str)
+    mask_b64 = base64.b64encode(png_bytes).decode()
+
+    # Map response format to local format
+    segments = result["label_map"]["segments"]
+    masks = [{"id": s["id"], "label": s["label"], "color": s["color_rgb"]} for s in segments]
+
+    print(f"[sam3-remote] received {len(masks)} masks")
+    return {"masks": masks, "mask_only_b64": mask_b64}
+
+
 # ── Request / Response models ─────────────────────────────────────────────────
 
 class ProcessUploadRequest(BaseModel):
@@ -146,6 +170,9 @@ class ProcessMasksRequest(BaseModel):
     enhancedImage: str  # raw base64 JPEG returned by /enhance
     promptClean: str = "empty room"
     promptRefine: str = "Remove all black outlines and black boundary lines between color regions. Make each colored area fill seamlessly to their edges without any black gaps, borders, or outlines. The result should have clean, sharp color boundaries where colors meet directly with no black separation lines."
+
+class DebugSegmentRequest(BaseModel):
+    image: str  # raw base64 (original image, no preprocessing)
 
 class MaskInfo(BaseModel):
     id: int
@@ -202,7 +229,7 @@ def enhance(req: ProcessUploadRequest):
 
 @app.post("/process-masks")
 def process_masks(req: ProcessMasksRequest):
-    """Steps 2-4: Seedream clean → local SAM3 → Seedream refine → returns masks."""
+    """Steps 2-4: Seedream clean → remote SAM3 → Seedream refine → returns masks."""
     enhanced = base64_to_image(req.enhancedImage)
     print(f"[process-masks] input size={enhanced.size}")
 
@@ -211,17 +238,14 @@ def process_masks(req: ProcessMasksRequest):
     cleaned.save(DEBUG_DIR / "cleaned.png")
     print(f"[process-masks] cleaned size={cleaned.size}")
 
-    # Step 3: Local SAM3 segmentation
-    if not _model_loaded:
-        raise HTTPException(503, detail="SAM3 model not yet loaded")
-
-    seg = segment_image(
+    # Step 3: Remote SAM3 segmentation
+    seg = call_sam3_remote(
         image=cleaned,
-        confidence_threshold=0.3,
-        prompts=["wall", "floor", "ceiling", "window", "door"],
+        prompts=["wall"],
+        confidence=0.3,
     )
     print(f"[process-masks] SAM3 found {len(seg['masks'])} masks")
-    masks = [{"id": m["id"], "label": m["label"], "color": m["color"]} for m in seg["masks"]]
+    masks = seg["masks"]
 
     mask_img = base64_to_image(seg["mask_only_b64"])
     mask_img.save(DEBUG_DIR / "mask_raw.png")
@@ -244,6 +268,32 @@ def process_upload(req: ProcessUploadRequest):
     masks_req = ProcessMasksRequest(enhancedImage=enh["enhancedImage"])
     result = process_masks(masks_req)
     return {**enh, **result, "width": req.width, "height": req.height}
+
+
+@app.post("/debug-segment")
+def debug_segment(req: DebugSegmentRequest):
+    """Debug mode: skip enhance/clean/refine, just run SAM3 on original image."""
+    original = base64_to_image(req.image)
+    original = ImageOps.exif_transpose(original)
+    print(f"[debug-segment] input size={original.size}")
+
+    seg = call_sam3_remote(
+        image=original,
+        prompts=["wall"],
+        confidence=0.3,
+    )
+    print(f"[debug-segment] SAM3 found {len(seg['masks'])} masks")
+    masks = seg["masks"]
+
+    mask_img = base64_to_image(seg["mask_only_b64"])
+    mask_img.save(DEBUG_DIR / "mask_raw.png")
+
+    mask_b64 = image_to_base64(mask_img, "PNG")
+    return {
+        "refinedMask": mask_b64,
+        "rawMask": mask_b64,
+        "masks": masks,
+    }
 
 
 @app.post("/apply-material")
