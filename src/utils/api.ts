@@ -103,6 +103,38 @@ export async function debugSegment(
   return data
 }
 
+export async function applyMaterialV2(
+  enforcedImage: string,
+  maskImage: string,
+  materialImage: string,
+): Promise<{ resultImage: string }> {
+  const resp = await fetch(`${backendUrl}/api/v2/apply-material`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enforcedImage, maskImage, materialImage }),
+  })
+  if (!resp.ok) {
+    const text = await resp.text()
+    throw new Error(`Apply material failed: ${resp.status} — ${text}`)
+  }
+  return resp.json()
+}
+
+export async function finalizeV2(
+  compositeImage: string,
+): Promise<{ finalImage: string }> {
+  const resp = await fetch(`${backendUrl}/api/v2/finalize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ compositeImage }),
+  })
+  if (!resp.ok) {
+    const text = await resp.text()
+    throw new Error(`Finalize failed: ${resp.status} — ${text}`)
+  }
+  return resp.json()
+}
+
 export async function applyMaterial(
   originalImage: string,
   materialFilename: string,

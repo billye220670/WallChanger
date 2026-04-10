@@ -5,7 +5,7 @@ import { ImageCanvas, type ImageCanvasHandle } from '../components/ImageCanvas'
 import { MaterialDrawer } from '../components/MaterialDrawer'
 import { DragPreview } from '../components/DragPreview'
 import { DebugPanel, type DebugFlags } from '../components/DebugPanel'
-import { applyMaterial as apiApplyMaterial, setBackendUrl } from '../utils/api'
+import { applyMaterialV2, setBackendUrl } from '../utils/api'
 import { getMaskAtPixel, compositeRegion, precomputeMaskOutlines, drawMaskOutline, drawMaskShimmer, drawProcessingShimmer, drawMaskDim, splitMaskByLine, loadBWMasksIntoOffscreen } from '../utils/canvas'
 import { touchToImageCoords } from '../utils/coords'
 
@@ -29,6 +29,7 @@ export function EditorScreen() {
     originalImage,
     refinedMask,
     rawMask,
+    isApplying,
     debugPrompts,
     setDraggingMaterial,
     setHoveredMaskId,
@@ -39,6 +40,7 @@ export function EditorScreen() {
     setPhase,
     setDebugPrompts,
     setMaskImages,
+    setIsApplying,
   } = useStore()
 
   const canvasRef           = useRef<ImageCanvasHandle>(null)
@@ -276,23 +278,54 @@ export function EditorScreen() {
     const { x: imgX, y: imgY } = touchToImageCoords(x, y, imageContainerRef.current, dimensions.width, dimensions.height)
     const mask = getMaskAtPixel(imgX, imgY)
     if (!mask) { setHoveredMaskId(null); return false }
+
+    // Synchronous lock — ComfyUI can only handle one job at a time
+    if (isApplying) { setHoveredMaskId(null); return false }
+
     setHoveredMaskId(null)
+    setIsApplying(true)
     addProcessingRegion(mask.id)
+
     try {
-      const result = await apiApplyMaterial(originalImage!, material.filename, debugPrompts.applyMaterial)
+      // Find the B&W mask image for this region
+      const maskIndex = masks.findIndex(m => m.id === mask.id)
+      const maskImageB64 = maskImages[maskIndex] ?? null
+      if (!maskImageB64 || !originalImage) throw new Error('Missing mask or image data')
+
+      // Load material as base64
+      const matResp = await fetch(`${backendUrl}/materials/${material.filename}`)
+      const matBlob = await matResp.blob()
+      const materialB64 = await new Promise<string>((resolve) => {
+        const reader = new FileReader()
+        reader.onload = (e) => resolve((e.target!.result as string).split(',')[1])
+        reader.readAsDataURL(matBlob)
+      })
+
+      const result = await applyMaterialV2(originalImage, maskImageB64, materialB64)
       setAppliedRegion(mask.id, result.resultImage)
+
+      // Composite: draw the RGBA result (with alpha) directly onto the canvas
       const canvas = canvasRef.current?.getCanvas()
       if (canvas) {
-        await compositeRegion(canvas, result.resultImage, mask.color, dimensions.width, dimensions.height, mask.id)
+        await new Promise<void>((resolve) => {
+          const img = new Image()
+          img.onload = () => {
+            const ctx = canvas.getContext('2d')!
+            ctx.drawImage(img, 0, 0, dimensions.width, dimensions.height)
+            resolve()
+          }
+          img.src = `data:image/png;base64,${result.resultImage}`
+        })
         setCompositeImage(canvas.toDataURL('image/png').split(',')[1])
       }
     } catch (err) {
       console.error('Apply material failed:', err)
     } finally {
       removeProcessingRegion(mask.id)
+      setIsApplying(false)
     }
     return true
-  }, [draggingMaterial, dimensions, masks, originalImage, debugPrompts.applyMaterial])
+  }, [draggingMaterial, dimensions, masks, maskImages, originalImage, backendUrl, isApplying])
 
   // ── Click-to-select (normal mode) ────────────────────────────────────────
   const handleImageClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {

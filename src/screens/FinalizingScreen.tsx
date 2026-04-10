@@ -1,14 +1,12 @@
 import { useEffect } from 'react'
 import { useStore } from '../store'
-import { finalize, setBackendUrl } from '../utils/api'
+import { finalizeV2, setBackendUrl } from '../utils/api'
 
 export function FinalizingScreen() {
   const {
     compositeImage,
     originalImage,
-    dimensions,
     backendUrl,
-    debugPrompts,
     setFinalImage,
     setPhase,
   } = useStore()
@@ -18,7 +16,7 @@ export function FinalizingScreen() {
     const imageToFinalize = compositeImage || originalImage
     if (!imageToFinalize) return
 
-    finalize(imageToFinalize, debugPrompts.finalize)
+    finalizeV2(imageToFinalize)
       .then((result) => {
         setFinalImage(result.finalImage)
         setPhase('done')

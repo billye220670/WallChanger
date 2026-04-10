@@ -18,6 +18,7 @@ interface AppStore extends AppState {
   setBackendUrl: (url: string) => void
   setDebugPrompts: (prompts: DebugPrompts) => void
   setDebugMode: (enabled: boolean) => void
+  setIsApplying: (v: boolean) => void
   loadExample: (originalImage: string, width: number, height: number, refinedMask: string, rawMask: string, masks: MaskInfo[]) => void
   reset: () => void
 }
@@ -45,6 +46,7 @@ const initialState: AppState = {
   processingStep: 0,
   processingRegions: new Set<number>(),
   appliedRegions: new Map<number, string>(),
+  isApplying: false,
   draggingMaterial: null,
   hoveredMaskId: null,
   backendUrl: savedBackendUrl,
@@ -124,6 +126,8 @@ export const useStore = create<AppStore>((set, get) => ({
     localStorage.setItem('debugMode', String(debugMode))
     set({ debugMode })
   },
+
+  setIsApplying: (isApplying) => set({ isApplying }),
 
   loadExample: (originalImage, width, height, refinedMask, rawMask, masks) => set({
     originalImage,

@@ -1,0 +1,432 @@
+{
+  "72": {
+    "inputs": {
+      "image": "ComfyUI_00088_.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "500": {
+    "inputs": {
+      "filename_prefix": "区域洗图(Masked)",
+      "images": [
+        "556",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "502": {
+    "inputs": {
+      "image": "a (2).png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "553": {
+    "inputs": {
+      "image": "ComfyUI_00099_.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "555": {
+    "inputs": {
+      "upscale_method": "nearest-exact",
+      "megapixels": 0.5,
+      "resolution_steps": 1,
+      "image": [
+        "502",
+        0
+      ]
+    },
+    "class_type": "ImageScaleToTotalPixels",
+    "_meta": {
+      "title": "图像按像素缩放"
+    }
+  },
+  "556": {
+    "inputs": {
+      "crop_to_mask": false,
+      "image": [
+        "501:488",
+        0
+      ],
+      "mask": [
+        "557",
+        0
+      ]
+    },
+    "class_type": "FL_ApplyMask",
+    "_meta": {
+      "title": "FL Apply Mask"
+    }
+  },
+  "557": {
+    "inputs": {
+      "channel": "red",
+      "image": [
+        "553",
+        0
+      ]
+    },
+    "class_type": "ImageToMask",
+    "_meta": {
+      "title": "Convert Image to Mask"
+    }
+  },
+  "501:472": {
+    "inputs": {
+      "conditioning": [
+        "501:474",
+        0
+      ],
+      "latent": [
+        "501:478",
+        0
+      ]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "ReferenceLatent"
+    }
+  },
+  "501:473": {
+    "inputs": {
+      "conditioning": [
+        "501:491",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "条件零化"
+    }
+  },
+  "501:474": {
+    "inputs": {
+      "conditioning": [
+        "501:473",
+        0
+      ],
+      "latent": [
+        "501:475",
+        0
+      ]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "ReferenceLatent"
+    }
+  },
+  "501:475": {
+    "inputs": {
+      "pixels": [
+        "501:485",
+        1
+      ],
+      "vae": [
+        "501:484",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
+    }
+  },
+  "501:476": {
+    "inputs": {
+      "conditioning": [
+        "501:477",
+        0
+      ],
+      "latent": [
+        "501:478",
+        0
+      ]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "ReferenceLatent"
+    }
+  },
+  "501:477": {
+    "inputs": {
+      "conditioning": [
+        "501:491",
+        0
+      ],
+      "latent": [
+        "501:475",
+        0
+      ]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "ReferenceLatent"
+    }
+  },
+  "501:478": {
+    "inputs": {
+      "pixels": [
+        "501:471",
+        0
+      ],
+      "vae": [
+        "501:484",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
+    }
+  },
+  "501:479": {
+    "inputs": {
+      "samples": [
+        "501:481",
+        0
+      ],
+      "vae": [
+        "501:484",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "501:480": {
+    "inputs": {
+      "seed": -1
+    },
+    "class_type": "Seed (rgthree)",
+    "_meta": {
+      "title": "随机种"
+    }
+  },
+  "501:484": {
+    "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "501:486": {
+    "inputs": {
+      "mask_opacity": 0.5000000000000001,
+      "mask_color": "255, 0, 0",
+      "pass_through": false,
+      "image": [
+        "501:485",
+        1
+      ],
+      "mask": [
+        "501:485",
+        2
+      ]
+    },
+    "class_type": "ImageAndMaskPreview",
+    "_meta": {
+      "title": "图像与遮罩预览"
+    }
+  },
+  "501:489": {
+    "inputs": {
+      "unet_name": "flux-2-klein\\Flux2-Klein-9B-True-v2-fp8mixed.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "501:490": {
+    "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "501:491": {
+    "inputs": {
+      "text": "将图一的墙面换成图二的材质样式",
+      "嵌入提示词": null,
+      "clip": [
+        "501:490",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "501:470": {
+    "inputs": {
+      "channel": "red",
+      "image": [
+        "553",
+        0
+      ]
+    },
+    "class_type": "ImageToMask",
+    "_meta": {
+      "title": "Convert Image to Mask"
+    }
+  },
+  "501:471": {
+    "inputs": {
+      "upscale_method": "nearest-exact",
+      "megapixels": 1,
+      "resolution_steps": 1,
+      "image": [
+        "555",
+        0
+      ]
+    },
+    "class_type": "ImageScaleToTotalPixels",
+    "_meta": {
+      "title": "图像按像素缩放"
+    }
+  },
+  "501:481": {
+    "inputs": {
+      "seed": [
+        "501:480",
+        0
+      ],
+      "steps": 2,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "501:489",
+        0
+      ],
+      "positive": [
+        "501:476",
+        0
+      ],
+      "negative": [
+        "501:472",
+        0
+      ],
+      "latent_image": [
+        "501:482",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "K采样器"
+    }
+  },
+  "501:485": {
+    "inputs": {
+      "downscale_algorithm": "bilinear",
+      "upscale_algorithm": "bicubic",
+      "preresize": false,
+      "preresize_mode": "ensure minimum resolution",
+      "preresize_min_width": 1024,
+      "preresize_min_height": 1024,
+      "preresize_max_width": 16384,
+      "preresize_max_height": 16384,
+      "mask_fill_holes": true,
+      "mask_expand_pixels": 10,
+      "mask_invert": false,
+      "mask_blend_pixels": 2,
+      "mask_hipass_filter": 0.1,
+      "extend_for_outpainting": false,
+      "extend_up_factor": 1,
+      "extend_down_factor": 1,
+      "extend_left_factor": 1,
+      "extend_right_factor": 1,
+      "context_from_mask_extend_factor": 1.4,
+      "output_resize_to_target_size": true,
+      "output_target_width": [
+        "501:483",
+        0
+      ],
+      "output_target_height": [
+        "501:483",
+        0
+      ],
+      "output_padding": "32",
+      "device_mode": "gpu (much faster)",
+      "image": [
+        "72",
+        0
+      ],
+      "mask": [
+        "501:470",
+        0
+      ]
+    },
+    "class_type": "InpaintCropImproved",
+    "_meta": {
+      "title": "✂️ Inpaint Crop"
+    }
+  },
+  "501:483": {
+    "inputs": {
+      "value": 1024
+    },
+    "class_type": "INTConstant",
+    "_meta": {
+      "title": "INT Constant"
+    }
+  },
+  "501:482": {
+    "inputs": {
+      "width": [
+        "501:483",
+        0
+      ],
+      "height": [
+        "501:483",
+        0
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyFlux2LatentImage",
+    "_meta": {
+      "title": "Empty Flux 2 Latent"
+    }
+  },
+  "501:488": {
+    "inputs": {
+      "stitcher": [
+        "501:485",
+        0
+      ],
+      "inpainted_image": [
+        "501:479",
+        0
+      ]
+    },
+    "class_type": "InpaintStitchImproved",
+    "_meta": {
+      "title": "✂️ Inpaint Stitch"
+    }
+  }
+}

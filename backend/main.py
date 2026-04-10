@@ -779,6 +779,152 @@ class PreprocessRequest(BaseModel):
     image: str  # raw base64
 
 
+class PreprocessRequest(BaseModel):
+    image: str  # raw base64
+
+
+class ApplyMaterialV2Request(BaseModel):
+    enforcedImage: str   # raw base64 PNG — EnforcedResult from preprocess
+    maskImage: str       # raw base64 PNG — B&W mask for the target region
+    materialImage: str   # raw base64 PNG — material reference texture
+
+
+class FinalizeV2Request(BaseModel):
+    compositeImage: str  # raw base64 PNG — all regions composited
+
+
+async def call_comfyui_apply_material(
+    enforced: Image.Image,
+    mask: Image.Image,
+    material: Image.Image,
+) -> Image.Image:
+    """
+    Call the 区域洗图 ComfyUI workflow.
+    Nodes:
+      "72"  → enforced image (scene)
+      "502" → material reference
+      "553" → B&W mask image
+    Output node "500" → masked result with alpha channel.
+    """
+    import uuid, json
+
+    workflow_path = Path(__file__).parent / "comfyui_apply_material_workflow.json"
+    with open(workflow_path, "r", encoding="utf-8") as f:
+        workflow = json.load(f)
+
+    base_url = COMFYUI_HOST.rstrip("/")
+    client_id = str(uuid.uuid4())
+
+    async with httpx.AsyncClient(timeout=600) as client:
+        async def upload(img: Image.Image, name: str) -> str:
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            buf.seek(0)
+            resp = await client.post(
+                f"{base_url}/upload/image",
+                files={"image": (name, buf, "image/png")},
+                data={"overwrite": "true"},
+            )
+            resp.raise_for_status()
+            return resp.json()["name"]
+
+        enforced_name = await upload(enforced, "wc_enforced.png")
+        material_name = await upload(material, "wc_material.png")
+        mask_name     = await upload(mask,     "wc_mask.png")
+        print(f"[comfyui-apply] uploaded enforced={enforced_name} material={material_name} mask={mask_name}")
+
+        workflow["72"]["inputs"]["image"]  = enforced_name
+        workflow["502"]["inputs"]["image"] = material_name
+        workflow["553"]["inputs"]["image"] = mask_name
+
+        resp = await client.post(f"{base_url}/prompt", json={"prompt": workflow, "client_id": client_id})
+        resp.raise_for_status()
+        prompt_id = resp.json()["prompt_id"]
+        print(f"[comfyui-apply] queued prompt_id={prompt_id}")
+
+        for _ in range(1200):
+            await asyncio.sleep(0.5)
+            hist = (await client.get(f"{base_url}/history/{prompt_id}")).json()
+            if prompt_id in hist:
+                outputs = hist[prompt_id].get("outputs", {})
+                break
+        else:
+            raise HTTPException(504, detail="ComfyUI apply-material timed out")
+
+        imgs = outputs.get("500", {}).get("images", [])
+        if not imgs:
+            raise HTTPException(500, detail="ComfyUI apply-material returned no image")
+
+        r = await client.get(
+            f"{base_url}/view",
+            params={"filename": imgs[0]["filename"], "subfolder": imgs[0].get("subfolder", ""), "type": imgs[0].get("type", "output")},
+        )
+        r.raise_for_status()
+
+    result = Image.open(io.BytesIO(r.content))
+    print(f"[comfyui-apply] result size={result.size} mode={result.mode}")
+    return result
+
+
+async def call_comfyui_finalize(composite: Image.Image) -> Image.Image:
+    """
+    Call the 重洗 ComfyUI workflow.
+    Node "72" → composite image.
+    Output node "500" → final polished image.
+    """
+    import uuid, json
+
+    workflow_path = Path(__file__).parent / "comfyui_finalize_workflow.json"
+    with open(workflow_path, "r", encoding="utf-8") as f:
+        workflow = json.load(f)
+
+    base_url = COMFYUI_HOST.rstrip("/")
+    client_id = str(uuid.uuid4())
+
+    async with httpx.AsyncClient(timeout=600) as client:
+        buf = io.BytesIO()
+        composite.save(buf, format="PNG")
+        buf.seek(0)
+        resp = await client.post(
+            f"{base_url}/upload/image",
+            files={"image": ("wc_composite.png", buf, "image/png")},
+            data={"overwrite": "true"},
+        )
+        resp.raise_for_status()
+        comp_name = resp.json()["name"]
+        print(f"[comfyui-finalize] uploaded composite={comp_name}")
+
+        workflow["72"]["inputs"]["image"] = comp_name
+
+        resp = await client.post(f"{base_url}/prompt", json={"prompt": workflow, "client_id": client_id})
+        resp.raise_for_status()
+        prompt_id = resp.json()["prompt_id"]
+        print(f"[comfyui-finalize] queued prompt_id={prompt_id}")
+
+        for _ in range(1200):
+            await asyncio.sleep(0.5)
+            hist = (await client.get(f"{base_url}/history/{prompt_id}")).json()
+            if prompt_id in hist:
+                outputs = hist[prompt_id].get("outputs", {})
+                break
+        else:
+            raise HTTPException(504, detail="ComfyUI finalize timed out")
+
+        imgs = outputs.get("500", {}).get("images", [])
+        if not imgs:
+            raise HTTPException(500, detail="ComfyUI finalize returned no image")
+
+        r = await client.get(
+            f"{base_url}/view",
+            params={"filename": imgs[0]["filename"], "subfolder": imgs[0].get("subfolder", ""), "type": imgs[0].get("type", "output")},
+        )
+        r.raise_for_status()
+
+    result = Image.open(io.BytesIO(r.content))
+    print(f"[comfyui-finalize] result size={result.size} mode={result.mode}")
+    return result
+
+
 async def call_comfyui_mask_workflow(image: Image.Image) -> tuple[Image.Image, list[Image.Image]]:
     """
     Call the 多乐士 ComfyUI mask-detection workflow.
@@ -884,6 +1030,45 @@ async def v2_preprocess(req: PreprocessRequest):
         "enforcedResult": image_to_base64(enforced_result, "PNG"),
         "masks": [image_to_base64(m, "PNG") for m in mask_images],
     }
+
+
+@app.post("/api/v2/apply-material")
+async def v2_apply_material(req: "ApplyMaterialV2Request"):
+    """
+    Apply a material to one wall region using the 区域洗图 ComfyUI workflow.
+    Inputs:
+      - enforcedImage: base64 PNG — the EnforcedResult from preprocess
+      - maskImage:     base64 PNG — the B&W mask for the target region
+      - materialImage: base64 PNG — the material reference texture
+    Returns:
+      - resultImage: base64 PNG with alpha channel (masked region only)
+    This endpoint is synchronous — only one call runs at a time on the ComfyUI side.
+    """
+    enforced = base64_to_image(req.enforcedImage)
+    mask     = base64_to_image(req.maskImage)
+    material = base64_to_image(req.materialImage)
+    print(f"[v2/apply-material] enforced={enforced.size} mask={mask.size} material={material.size}")
+
+    result = await call_comfyui_apply_material(enforced, mask, material)
+    result.save(DEBUG_DIR / "apply_material_result.png")
+
+    return {"resultImage": image_to_base64(result, "PNG")}
+
+
+@app.post("/api/v2/finalize")
+async def v2_finalize(req: "FinalizeV2Request"):
+    """
+    Final polish pass using the 重洗 ComfyUI workflow.
+    Input:  compositeImage — base64 PNG of all regions composited together
+    Output: finalImage — base64 PNG
+    """
+    composite = base64_to_image(req.compositeImage)
+    print(f"[v2/finalize] composite={composite.size}")
+
+    final = await call_comfyui_finalize(composite)
+    final.save(DEBUG_DIR / "v2_final.png")
+
+    return {"finalImage": image_to_base64(final, "PNG")}
 
 
 @app.post("/api/v2/split-mask")

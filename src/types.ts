@@ -45,6 +45,7 @@ export interface AppState {
   processingStep: 0 | 1 | 2 | 3 | 4
   processingRegions: Set<number>
   appliedRegions: Map<number, string>
+  isApplying: boolean   // mutex: only one apply-material at a time
 
   // Drag state
   draggingMaterial: Material | null
