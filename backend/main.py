@@ -18,8 +18,8 @@ load_dotenv()
 # ── SAM3 remote API ──────────────────────────────────────────────────────────
 SAM3_API = os.getenv("SAM3_API", "https://sh-llm-api.tinttex.cn:8443/sam3/segment")
 
-# ── Flux2 Klein API ──────────────────────────────────────────────────────────
-FLUX2_API = os.getenv("FLUX2_API", "https://sh-llm-api.tinttex.cn:8443/flux2-klein/edit-multi")
+# ── ComfyUI API ──────────────────────────────────────────────────────────────
+COMFYUI_HOST = os.getenv("COMFYUI_HOST", "http://192.168.31.44:8188")
 
 # ── Materials path ───────────────────────────────────────────────────────────
 # Relative to this file's directory (backend/) → ../public/materials
@@ -78,31 +78,248 @@ def snap_to_64(w: int, h: int, target: int = 1024) -> tuple[int, int]:
 
 async def call_flux2(prompt: str, images: list[Image.Image]) -> Image.Image:
     """
-    Call self-hosted Flux2 Klein /edit-multi endpoint.
-    Sends images as multipart files, returns a PIL Image (PNG).
-    Width/height are auto-calculated from the first image (aspect-preserving,
-    long side ≈ 1024, both sides aligned to 64).
+    Call ComfyUI (http://192.168.31.44:8188) with the YZZ2 workflow.
+    images[0] is the main image (scene), images[1] (optional) is the reference material.
+    Width/height are read from the uploaded image via GetImageSize node (366).
     """
-    ref = images[0]
-    w, h = snap_to_64(ref.width, ref.height)
-    print(f"[flux2] calling API  prompt='{prompt[:60]}...'  images={len(images)}  size={w}x{h}")
+    import uuid
 
-    files = []
-    for i, img in enumerate(images):
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        buf.seek(0)
-        files.append(("images", (f"image_{i}.png", buf, "image/png")))
+    print(f"[comfyui] calling  prompt='{prompt[:60]}...'  images={len(images)}")
 
-    data = {"prompts": prompt, "width": str(w), "height": str(h)}
+    base_url = COMFYUI_HOST.rstrip("/")
+    client_id = str(uuid.uuid4())
 
-    async with httpx.AsyncClient(timeout=180, verify=False) as client:
-        resp = await client.post(FLUX2_API, files=files, data=data)
+    async with httpx.AsyncClient(timeout=300) as client:
+        # ── 1. Upload images ─────────────────────────────────────────────────
+        async def upload_image(img: Image.Image, filename: str) -> str:
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            buf.seek(0)
+            resp = await client.post(
+                f"{base_url}/upload/image",
+                files={"image": (filename, buf, "image/png")},
+                data={"overwrite": "true"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data["name"]
+
+        main_name = await upload_image(images[0], "wallchanger_main.png")
+        ref_name = await upload_image(images[1], "wallchanger_ref.png") if len(images) > 1 else main_name
+
+        # ── 2. Build workflow from YZZ template ──────────────────────────────
+        workflow = {
+            "172": {
+                "inputs": {"sampler_name": "euler"},
+                "class_type": "KSamplerSelect",
+                "_meta": {"title": "KSamplerSelect"}
+            },
+            "173": {
+                "inputs": {
+                    "cfg": 1,
+                    "model": ["179", 0],
+                    "positive": ["202", 0],
+                    "negative": ["203", 0]
+                },
+                "class_type": "CFGGuider",
+                "_meta": {"title": "CFGGuider"}
+            },
+            "175": {
+                "inputs": {"width": ["366", 0], "height": ["366", 1], "batch_size": 1},
+                "class_type": "EmptyFlux2LatentImage",
+                "_meta": {"title": "Empty Flux 2 Latent"}
+            },
+            "176": {
+                "inputs": {"steps": 2, "width": ["366", 0], "height": ["366", 1]},
+                "class_type": "Flux2Scheduler",
+                "_meta": {"title": "Flux2Scheduler"}
+            },
+            "177": {
+                "inputs": {"samples": ["191", 0], "vae": ["181", 0]},
+                "class_type": "VAEDecode",
+                "_meta": {"title": "VAE Decode"}
+            },
+            "179": {
+                "inputs": {
+                    "unet_name": "Flux2\\flux-2-klein-9b-fp8.safetensors",
+                    "weight_dtype": "default"
+                },
+                "class_type": "UNETLoader",
+                "_meta": {"title": "Load Diffusion Model"}
+            },
+            "180": {
+                "inputs": {
+                    "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+                    "type": "flux2",
+                    "device": "default"
+                },
+                "class_type": "CLIPLoader",
+                "_meta": {"title": "Load CLIP"}
+            },
+            "181": {
+                "inputs": {"vae_name": "flux2-vae.safetensors"},
+                "class_type": "VAELoader",
+                "_meta": {"title": "Load VAE"}
+            },
+            "184": {
+                "inputs": {
+                    "conditioning": ["193", 0],
+                    "latent": ["195", 0]
+                },
+                "class_type": "ReferenceLatent",
+                "_meta": {"title": "ReferenceLatent"}
+            },
+            "185": {
+                "inputs": {"noise_seed": 9527},
+                "class_type": "RandomNoise",
+                "_meta": {"title": "RandomNoise"}
+            },
+            "191": {
+                "inputs": {
+                    "noise": ["185", 0],
+                    "guider": ["173", 0],
+                    "sampler": ["172", 0],
+                    "sigmas": ["176", 0],
+                    "latent_image": ["175", 0]
+                },
+                "class_type": "SamplerCustomAdvanced",
+                "_meta": {"title": "SamplerCustomAdvanced"}
+            },
+            "193": {
+                "inputs": {"text": prompt, "clip": ["180", 0]},
+                "class_type": "CLIPTextEncode",
+                "_meta": {"title": "CLIP Text Encode (Positive Prompt)"}
+            },
+            "194": {
+                "inputs": {"image": main_name},
+                "class_type": "LoadImage",
+                "_meta": {"title": "图像1"}
+            },
+            "195": {
+                "inputs": {"pixels": ["194", 0], "vae": ["181", 0]},
+                "class_type": "VAEEncode",
+                "_meta": {"title": "VAE Encode"}
+            },
+            "196": {
+                "inputs": {
+                    "conditioning": ["197", 0],
+                    "latent": ["195", 0]
+                },
+                "class_type": "ReferenceLatent",
+                "_meta": {"title": "ReferenceLatent"}
+            },
+            "197": {
+                "inputs": {"conditioning": ["193", 0]},
+                "class_type": "ConditioningZeroOut",
+                "_meta": {"title": "ConditioningZeroOut"}
+            },
+            "198": {
+                "inputs": {
+                    "filename_prefix": "Klein双图编辑",
+                    "images": ["177", 0]
+                },
+                "class_type": "SaveImage",
+                "_meta": {"title": "Save Image"}
+            },
+            "199": {
+                "inputs": {"images": ["177", 0]},
+                "class_type": "PreviewImage",
+                "_meta": {"title": "Preview Image"}
+            },
+            "200": {
+                "inputs": {"image": ref_name},
+                "class_type": "LoadImage",
+                "_meta": {"title": "图像2"}
+            },
+            "202": {
+                "inputs": {
+                    "conditioning": ["184", 0],
+                    "latent": ["204", 0]
+                },
+                "class_type": "ReferenceLatent",
+                "_meta": {"title": "ReferenceLatent"}
+            },
+            "203": {
+                "inputs": {
+                    "conditioning": ["196", 0],
+                    "latent": ["204", 0]
+                },
+                "class_type": "ReferenceLatent",
+                "_meta": {"title": "ReferenceLatent"}
+            },
+            "204": {
+                "inputs": {"pixels": ["367", 0], "vae": ["181", 0]},
+                "class_type": "VAEEncode",
+                "_meta": {"title": "VAE Encode"}
+            },
+            "366": {
+                "inputs": {"image": ["368", 0]},
+                "class_type": "GetImageSize",
+                "_meta": {"title": "Get Image Size"}
+            },
+            "367": {
+                "inputs": {
+                    "upscale_method": "nearest-exact",
+                    "megapixels": 0.5,
+                    "resolution_steps": 1,
+                    "image": ["200", 0]
+                },
+                "class_type": "ImageScaleToTotalPixels",
+                "_meta": {"title": "ImageScaleToTotalPixels"}
+            },
+            "368": {
+                "inputs": {
+                    "upscale_method": "nearest-exact",
+                    "megapixels": 0.5,
+                    "resolution_steps": 1,
+                    "image": ["194", 0]
+                },
+                "class_type": "ImageScaleToTotalPixels",
+                "_meta": {"title": "ImageScaleToTotalPixels"}
+            }
+        }
+
+        # ── 3. Queue prompt ──────────────────────────────────────────────────
+        payload = {"prompt": workflow, "client_id": client_id}
+        resp = await client.post(f"{base_url}/prompt", json=payload)
         resp.raise_for_status()
+        prompt_id = resp.json()["prompt_id"]
+        print(f"[comfyui] queued prompt_id={prompt_id}")
 
-    img = Image.open(io.BytesIO(resp.content))
-    print(f"[flux2] received {img.size} mode={img.mode}")
-    return img
+        # ── 4. Poll for completion ───────────────────────────────────────────
+        for _ in range(600):  # up to ~5 minutes
+            await asyncio.sleep(0.5)
+            hist_resp = await client.get(f"{base_url}/history/{prompt_id}")
+            hist_resp.raise_for_status()
+            history = hist_resp.json()
+            if prompt_id in history:
+                outputs = history[prompt_id].get("outputs", {})
+                break
+        else:
+            raise HTTPException(504, detail="ComfyUI timed out waiting for result")
+
+        # ── 5. Find output image (SaveImage node 198) ────────────────────────
+        images_out = outputs.get("198", {}).get("images")
+        if not images_out:
+            # Fallback: find any node with images output
+            for node_out in outputs.values():
+                imgs = node_out.get("images")
+                if imgs:
+                    images_out = imgs
+                    break
+        if not images_out:
+            raise HTTPException(500, detail="ComfyUI returned no output images")
+
+        img_info = images_out[0]
+        img_resp = await client.get(
+            f"{base_url}/view",
+            params={"filename": img_info["filename"], "subfolder": img_info.get("subfolder", ""), "type": img_info.get("type", "output")},
+        )
+        img_resp.raise_for_status()
+
+    result = Image.open(io.BytesIO(img_resp.content))
+    print(f"[comfyui] received {result.size} mode={result.mode}")
+    return result
 
 
 async def call_sam3_remote(image: Image.Image, prompts: list[str], confidence: float = 0.3) -> dict:
@@ -279,7 +496,7 @@ class MaskInfo(BaseModel):
 class ApplyMaterialRequest(BaseModel):
     originalImage: str      # raw base64
     materialFilename: str
-    promptApplyMaterial: str = "based on image 2, change all wall material in image 1."
+    promptApplyMaterial: str = "use image2 as a reference, repaint all wall in image 1"
 
 class FinalizeRequest(BaseModel):
     compositeImage: str     # raw base64
@@ -299,13 +516,13 @@ class SegmentRequest(BaseModel):
 class RegionItem(BaseModel):
     maskColor: list[int]                # [R, G, B] matching mask colour
     materialImage: str                  # raw base64 of material texture
-    prompt: str = "based on image 2, change all wall material in image 1."
+    prompt: str = "use image2 as a reference, repaint all wall in image 1"
 
 class CoordRegionItem(BaseModel):
     x: int                              # pixel X on original image
     y: int                              # pixel Y on original image
     referenceImage: str                 # raw base64 of material texture
-    prompt: str = "based on image 2, change all wall material in image 1."
+    prompt: str = "use image2 as a reference, repaint all wall in image 1"
 
 class RenderRequest(BaseModel):
     image: str                          # raw base64 (original / enhanced)
@@ -556,6 +773,117 @@ async def v2_render(req: RenderRequest):
     final_img.save(DEBUG_DIR / "v2_final.png")
 
     return {"finalImage": image_to_base64(final_img, "PNG")}
+
+
+class PreprocessRequest(BaseModel):
+    image: str  # raw base64
+
+
+async def call_comfyui_mask_workflow(image: Image.Image) -> tuple[Image.Image, list[Image.Image]]:
+    """
+    Call the 多乐士 ComfyUI mask-detection workflow.
+    Returns (enforced_result, [mask1, mask2, ...]).
+    """
+    import uuid
+    import json
+
+    workflow_path = Path(__file__).parent / "comfyui_mask_workflow.json"
+    with open(workflow_path, "r", encoding="utf-8") as f:
+        workflow = json.load(f)
+
+    base_url = COMFYUI_HOST.rstrip("/")
+    client_id = str(uuid.uuid4())
+
+    async with httpx.AsyncClient(timeout=600) as client:
+        # Upload image
+        buf = io.BytesIO()
+        image.save(buf, format="PNG")
+        buf.seek(0)
+        resp = await client.post(
+            f"{base_url}/upload/image",
+            files={"image": ("wallchanger_input.png", buf, "image/png")},
+            data={"overwrite": "true"},
+        )
+        resp.raise_for_status()
+        uploaded_name = resp.json()["name"]
+        print(f"[comfyui-mask] uploaded as {uploaded_name}")
+
+        # Patch LoadImage node "72"
+        workflow["72"]["inputs"]["image"] = uploaded_name
+
+        # Queue prompt
+        payload = {"prompt": workflow, "client_id": client_id}
+        resp = await client.post(f"{base_url}/prompt", json=payload)
+        resp.raise_for_status()
+        prompt_id = resp.json()["prompt_id"]
+        print(f"[comfyui-mask] queued prompt_id={prompt_id}")
+
+        # Poll for completion
+        for _ in range(1200):  # up to ~10 minutes
+            await asyncio.sleep(0.5)
+            hist_resp = await client.get(f"{base_url}/history/{prompt_id}")
+            hist_resp.raise_for_status()
+            history = hist_resp.json()
+            if prompt_id in history:
+                outputs = history[prompt_id].get("outputs", {})
+                break
+        else:
+            raise HTTPException(504, detail="ComfyUI mask workflow timed out")
+
+        async def download_image(img_info: dict) -> Image.Image:
+            r = await client.get(
+                f"{base_url}/view",
+                params={
+                    "filename": img_info["filename"],
+                    "subfolder": img_info.get("subfolder", ""),
+                    "type": img_info.get("type", "output"),
+                },
+            )
+            r.raise_for_status()
+            return Image.open(io.BytesIO(r.content))
+
+        # Node "554" → EnforcedResult (single image)
+        enforced_imgs = outputs.get("554", {}).get("images", [])
+        if not enforced_imgs:
+            raise HTTPException(500, detail="ComfyUI returned no EnforcedResult image")
+        enforced_result = await download_image(enforced_imgs[0])
+        print(f"[comfyui-mask] EnforcedResult size={enforced_result.size}")
+
+        # Node "500" → Mask images (batch, one per wall region)
+        mask_imgs_info = outputs.get("500", {}).get("images", [])
+        if not mask_imgs_info:
+            raise HTTPException(500, detail="ComfyUI returned no Mask images")
+        mask_images = []
+        for info in mask_imgs_info:
+            m = await download_image(info)
+            mask_images.append(m)
+        print(f"[comfyui-mask] received {len(mask_images)} mask(s)")
+
+    return enforced_result, mask_images
+
+
+@app.post("/api/v2/preprocess")
+async def v2_preprocess(req: PreprocessRequest):
+    """
+    New preprocessing endpoint: upload image → ComfyUI 多乐士 workflow
+    → returns EnforcedResult image + list of B&W mask images.
+    Replaces the old enhance + process-masks pipeline.
+    """
+    original = base64_to_image(req.image)
+    original = ImageOps.exif_transpose(original)
+    print(f"[v2/preprocess] input size={original.size}")
+
+    enforced_result, mask_images = await call_comfyui_mask_workflow(original)
+
+    # Save debug copies
+    enforced_result.save(DEBUG_DIR / "enforced_result.png")
+    for i, m in enumerate(mask_images):
+        m.save(DEBUG_DIR / f"bw_mask_{i}.png")
+
+    return {
+        "enforcedResult": image_to_base64(enforced_result, "PNG"),
+        "masks": [image_to_base64(m, "PNG") for m in mask_images],
+    }
 
 
 @app.post("/api/v2/split-mask")

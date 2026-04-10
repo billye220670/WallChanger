@@ -6,7 +6,7 @@ import { MaterialDrawer } from '../components/MaterialDrawer'
 import { DragPreview } from '../components/DragPreview'
 import { DebugPanel, type DebugFlags } from '../components/DebugPanel'
 import { applyMaterial as apiApplyMaterial, setBackendUrl } from '../utils/api'
-import { getMaskAtPixel, compositeRegion, precomputeMaskOutlines, drawMaskOutline, drawMaskShimmer, drawProcessingShimmer, drawMaskDim, splitMaskByLine } from '../utils/canvas'
+import { getMaskAtPixel, compositeRegion, precomputeMaskOutlines, drawMaskOutline, drawMaskShimmer, drawProcessingShimmer, drawMaskDim, splitMaskByLine, loadBWMasksIntoOffscreen } from '../utils/canvas'
 import { touchToImageCoords } from '../utils/coords'
 
 // ── Line editor types ─────────────────────────────────────────────────────────
@@ -20,6 +20,7 @@ type DragTarget =
 export function EditorScreen() {
   const {
     masks,
+    maskImages,
     dimensions,
     processingRegions,
     hoveredMaskId,
@@ -37,7 +38,7 @@ export function EditorScreen() {
     setCompositeImage,
     setPhase,
     setDebugPrompts,
-    setMasks,
+    setMaskImages,
   } = useStore()
 
   const canvasRef           = useRef<ImageCanvasHandle>(null)
@@ -62,6 +63,10 @@ export function EditorScreen() {
   const [lineStart, setLineStart] = useState<Point | null>(null)
   const [lineEnd, setLineEnd]     = useState<Point | null>(null)
   const lineDragRef = useRef<DragTarget | null>(null)
+
+  // Snapshot of original maskImages + masks (before any splits), for full reset
+  const originalSnapshotRef = useRef<{ maskImages: string[]; masks: typeof masks } | null>(null)
+  const [hasSplit, setHasSplit] = useState(false)
 
   // ── Contain-box sizing ────────────────────────────────────────────────────
   const [imgBox, setImgBox] = useState({ x: 0, y: 0, w: 0, h: 0 })
@@ -395,19 +400,34 @@ export function EditorScreen() {
       return
     }
 
-    const { newMaskBase64, newMask } = result
+    // Save snapshot before the very first split
+    if (!originalSnapshotRef.current) {
+      originalSnapshotRef.current = { maskImages: [...maskImages], masks: [...masks] }
+    }
+
+    const { updatedMaskBase64, newMaskBase64, newMask } = result
     const updatedMasks = [...masks, newMask]
 
-    // Persist back: rawMask stays unchanged; refinedMask updated from offscreen
-    setMasks(newMaskBase64, rawMask ?? newMaskBase64, updatedMasks)
+    if (maskImages.length > 0) {
+      // B&W mask mode: update maskImages array
+      const mi = masks.findIndex(m => m.id === selectedMaskId)
+      const updatedMaskImages = [...maskImages]
+      if (mi >= 0) updatedMaskImages[mi] = updatedMaskBase64
+      updatedMaskImages.push(newMaskBase64)
+      setMaskImages(updatedMaskImages, updatedMasks)
+    } else {
+      // Legacy color mask mode: just update masks list
+      setMaskImages([], updatedMasks)
+    }
     precomputeMaskOutlines(updatedMasks)
 
     // Exit editing mode, deselect
+    setHasSplit(true)
     setEditing(false)
     setSelectedMaskId(null)
     setLineStart(null)
     setLineEnd(null)
-  }, [lineStart, lineEnd, selectedMaskId, dimensions, masks, rawMask, setMasks])
+  }, [lineStart, lineEnd, selectedMaskId, dimensions, masks, maskImages, setMaskImages])
 
   const isProcessing = processingRegions.size > 0
 
@@ -548,13 +568,42 @@ export function EditorScreen() {
             {/* Edit button */}
             {selectedMaskId !== null && (
               <button
-                onClick={(e) => { e.stopPropagation(); setEditing(true); setLineStart(null); setLineEnd(null) }}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setEditing(true)
+                  setLineStart(null)
+                  setLineEnd(null)
+                }}
                 className="absolute bottom-20 left-4 z-40 flex items-center gap-2 px-4 py-3 rounded-full font-bold text-white shadow-2xl bg-white/15 backdrop-blur-sm border border-white/20 hover:bg-white/25 active:scale-95 transition-all"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                 </svg>
                 编辑
+              </button>
+            )}
+
+            {/* Reset splits button — only shown after at least one split */}
+            {hasSplit && (
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation()
+                  const snap = originalSnapshotRef.current
+                  if (!snap) return
+                  await loadBWMasksIntoOffscreen(snap.maskImages, dimensions.width, dimensions.height)
+                  setMaskImages(snap.maskImages, snap.masks)
+                  precomputeMaskOutlines(snap.masks)
+                  setHasSplit(false)
+                  setSelectedMaskId(null)
+                }}
+                className={`absolute bottom-20 z-40 flex items-center gap-2 px-4 py-3 rounded-full font-bold text-white shadow-2xl bg-white/15 backdrop-blur-sm border border-white/20 hover:bg-white/25 active:scale-95 transition-all ${
+                  selectedMaskId !== null ? 'left-36' : 'left-4'
+                }`}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                恢复区域
               </button>
             )}
           </>
@@ -576,7 +625,7 @@ export function EditorScreen() {
 
       {/* ── Editing mode bottom bar ───────────────────────────────────────── */}
       {editing ? (
-        <div className="flex-none flex items-center justify-center px-6 py-4 bg-gray-900/80 backdrop-blur-sm border-t border-white/[0.06]">
+        <div className="flex-none flex items-center justify-center gap-3 px-6 py-4 bg-gray-900/80 backdrop-blur-sm border-t border-white/[0.06]">
           <button
             onClick={handleApply}
             disabled={!lineStart || !lineEnd}

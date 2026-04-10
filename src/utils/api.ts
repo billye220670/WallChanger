@@ -18,6 +18,24 @@ export async function getMaterials(): Promise<Material[]> {
   return resp.json()
 }
 
+export async function preprocessImage(
+  image: string,
+): Promise<{ enforcedResult: string; masks: string[] }> {
+  const resp = await fetch(`${backendUrl}/api/v2/preprocess`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image }),
+  })
+  if (!resp.ok) {
+    const text = await resp.text()
+    console.error('[preprocess] error response:', resp.status, text)
+    throw new Error(`Preprocess failed: ${resp.status} — ${text}`)
+  }
+  const data = await resp.json()
+  console.log('[preprocess] success: masks count =', data.masks?.length)
+  return data
+}
+
 export async function enhanceImage(
   image: string,
   width: number,

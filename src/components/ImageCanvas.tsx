@@ -1,6 +1,6 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle } from 'react'
 import { useStore } from '../store'
-import { initOffscreenCanvas, loadMaskIntoOffscreen } from '../utils/canvas'
+import { initOffscreenCanvas, loadMaskIntoOffscreen, loadBWMasksIntoOffscreen } from '../utils/canvas'
 
 export interface ImageCanvasHandle {
   getCanvas: () => HTMLCanvasElement | null
@@ -14,7 +14,7 @@ interface ImageCanvasProps {
 export const ImageCanvas = forwardRef<ImageCanvasHandle, ImageCanvasProps>(
   function ImageCanvas({ onReady }, ref) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
-    const { originalImage, refinedMask, rawMask, compositeImage, dimensions } = useStore()
+    const { originalImage, refinedMask, rawMask, maskImages, compositeImage, dimensions } = useStore()
 
     // Keep a ref to compositeImage so Effect 1 can read the latest value
     // without needing it in the dependency array (avoids re-running mask init)
@@ -43,13 +43,17 @@ export const ImageCanvas = forwardRef<ImageCanvasHandle, ImageCanvasProps>(
       img.onload = async () => {
         ctx.drawImage(img, 0, 0, width, height)
         initOffscreenCanvas(width, height)
-        if (refinedMask) {
+
+        if (maskImages.length > 0) {
+          // New B&W mask pipeline
+          await loadBWMasksIntoOffscreen(maskImages, width, height)
+        } else if (refinedMask) {
           await loadMaskIntoOffscreen(refinedMask)
         } else if (rawMask) {
           await loadMaskIntoOffscreen(rawMask)
         }
-        // If a composite already exists (e.g. Effect 1 re-ran after compositing),
-        // restore it on top so the enhanced image doesn't cover the applied material.
+
+        // If a composite already exists, restore it on top
         const existing = compositeImageRef.current
         if (existing) {
           await new Promise<void>(resolve => {
@@ -61,8 +65,8 @@ export const ImageCanvas = forwardRef<ImageCanvasHandle, ImageCanvasProps>(
         }
         onReady()
       }
-      img.src = `data:image/jpeg;base64,${originalImage}`
-    }, [originalImage, refinedMask, rawMask])
+      img.src = `data:image/octet-stream;base64,${originalImage}`
+    }, [originalImage, refinedMask, rawMask, maskImages])
 
     useEffect(() => {
       if (!compositeImage || !canvasRef.current) return

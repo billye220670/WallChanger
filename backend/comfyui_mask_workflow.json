@@ -1,0 +1,698 @@
+{
+  "72": {
+    "inputs": {
+      "image": "Test (3).jpg"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "500": {
+    "inputs": {
+      "filename_prefix": "Mask",
+      "images": [
+        "553:71",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "554": {
+    "inputs": {
+      "filename_prefix": "EnforcedResult",
+      "images": [
+        "556",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "556": {
+    "inputs": {
+      "method": "hm",
+      "strength": 0.4,
+      "multithread": true,
+      "image_ref": [
+        "72",
+        0
+      ],
+      "image_target": [
+        "527:524",
+        0
+      ]
+    },
+    "class_type": "ColorMatch",
+    "_meta": {
+      "title": "图像调色"
+    }
+  },
+  "527:515": {
+    "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "hunyuan_image",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "527:516": {
+    "inputs": {
+      "unet_name": "flux-2-klein\\Flux2-Klein-9B-True-v2-fp8mixed.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "527:517": {
+    "inputs": {
+      "conditioning": [
+        "527:523",
+        0
+      ],
+      "latent": [
+        "527:518",
+        0
+      ]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "ReferenceLatent"
+    }
+  },
+  "527:518": {
+    "inputs": {
+      "pixels": [
+        "527:529",
+        0
+      ],
+      "vae": [
+        "527:522",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
+    }
+  },
+  "527:519": {
+    "inputs": {
+      "width": [
+        "527:520",
+        0
+      ],
+      "height": [
+        "527:520",
+        1
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "527:520": {
+    "inputs": {
+      "image": [
+        "527:529",
+        0
+      ]
+    },
+    "class_type": "GetImageSize+",
+    "_meta": {
+      "title": "🔧 Get Image Size"
+    }
+  },
+  "527:521": {
+    "inputs": {
+      "conditioning": [
+        "527:523",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "条件零化"
+    }
+  },
+  "527:522": {
+    "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "527:523": {
+    "inputs": {
+      "text": "realistic render",
+      "嵌入提示词": null,
+      "clip": [
+        "527:515",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "527:524": {
+    "inputs": {
+      "samples": [
+        "527:525",
+        0
+      ],
+      "vae": [
+        "527:522",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "527:526": {
+    "inputs": {
+      "conditioning": [
+        "527:521",
+        0
+      ],
+      "latent": [
+        "527:518",
+        0
+      ]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "ReferenceLatent"
+    }
+  },
+  "527:529": {
+    "inputs": {
+      "blur_radius": 2,
+      "sigma": 1,
+      "image": [
+        "72",
+        0
+      ]
+    },
+    "class_type": "ImageBlur",
+    "_meta": {
+      "title": "Image Blur"
+    }
+  },
+  "527:525": {
+    "inputs": {
+      "seed": 42,
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "527:516",
+        0
+      ],
+      "positive": [
+        "527:517",
+        0
+      ],
+      "negative": [
+        "527:526",
+        0
+      ],
+      "latent_image": [
+        "527:519",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "K采样器"
+    }
+  },
+  "76:1": {
+    "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "hunyuan_image",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "76:3": {
+    "inputs": {
+      "unet_name": "flux-2-klein\\Flux2-Klein-9B-True-v2-fp8mixed.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "76:4": {
+    "inputs": {
+      "conditioning": [
+        "76:13",
+        0
+      ],
+      "latent": [
+        "76:5",
+        0
+      ]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "ReferenceLatent"
+    }
+  },
+  "76:5": {
+    "inputs": {
+      "pixels": [
+        "527:524",
+        0
+      ],
+      "vae": [
+        "76:11",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
+    }
+  },
+  "76:6": {
+    "inputs": {
+      "width": [
+        "76:7",
+        0
+      ],
+      "height": [
+        "76:7",
+        1
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "76:7": {
+    "inputs": {
+      "image": [
+        "527:524",
+        0
+      ]
+    },
+    "class_type": "GetImageSize+",
+    "_meta": {
+      "title": "🔧 Get Image Size"
+    }
+  },
+  "76:8": {
+    "inputs": {
+      "conditioning": [
+        "76:13",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "条件零化"
+    }
+  },
+  "76:11": {
+    "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "76:13": {
+    "inputs": {
+      "text": "remove all, keep only wall, floor",
+      "嵌入提示词": null,
+      "clip": [
+        "76:1",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "76:2": {
+    "inputs": {
+      "samples": [
+        "76:10",
+        0
+      ],
+      "vae": [
+        "76:11",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "76:9": {
+    "inputs": {
+      "conditioning": [
+        "76:8",
+        0
+      ],
+      "latent": [
+        "76:5",
+        0
+      ]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "ReferenceLatent"
+    }
+  },
+  "76:10": {
+    "inputs": {
+      "seed": 42,
+      "steps": 2,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "76:3",
+        0
+      ],
+      "positive": [
+        "76:4",
+        0
+      ],
+      "negative": [
+        "76:9",
+        0
+      ],
+      "latent_image": [
+        "76:6",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "K采样器"
+    }
+  },
+  "544:532": {
+    "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "hunyuan_image",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "544:533": {
+    "inputs": {
+      "unet_name": "flux-2-klein\\Flux2-Klein-9B-True-v2-fp8mixed.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "544:534": {
+    "inputs": {
+      "conditioning": [
+        "544:540",
+        0
+      ],
+      "latent": [
+        "544:535",
+        0
+      ]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "ReferenceLatent"
+    }
+  },
+  "544:535": {
+    "inputs": {
+      "pixels": [
+        "76:2",
+        0
+      ],
+      "vae": [
+        "544:539",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
+    }
+  },
+  "544:536": {
+    "inputs": {
+      "width": [
+        "544:537",
+        0
+      ],
+      "height": [
+        "544:537",
+        1
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "544:537": {
+    "inputs": {
+      "image": [
+        "76:2",
+        0
+      ]
+    },
+    "class_type": "GetImageSize+",
+    "_meta": {
+      "title": "🔧 Get Image Size"
+    }
+  },
+  "544:538": {
+    "inputs": {
+      "conditioning": [
+        "544:540",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "条件零化"
+    }
+  },
+  "544:539": {
+    "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "544:540": {
+    "inputs": {
+      "text": "no shadow, plain lighting, flat surface, flat color",
+      "嵌入提示词": null,
+      "clip": [
+        "544:532",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "544:541": {
+    "inputs": {
+      "samples": [
+        "544:543",
+        0
+      ],
+      "vae": [
+        "544:539",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "544:542": {
+    "inputs": {
+      "conditioning": [
+        "544:538",
+        0
+      ],
+      "latent": [
+        "544:535",
+        0
+      ]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "ReferenceLatent"
+    }
+  },
+  "544:543": {
+    "inputs": {
+      "seed": 42,
+      "steps": 2,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "544:533",
+        0
+      ],
+      "positive": [
+        "544:534",
+        0
+      ],
+      "negative": [
+        "544:542",
+        0
+      ],
+      "latent_image": [
+        "544:536",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "K采样器"
+    }
+  },
+  "553:68": {
+    "inputs": {
+      "model": "sam3-fp16.safetensors",
+      "segmentor": "video",
+      "device": "cuda",
+      "precision": "fp16"
+    },
+    "class_type": "easy sam3ModelLoader",
+    "_meta": {
+      "title": "Load SAM3 Model"
+    }
+  },
+  "553:66": {
+    "inputs": {
+      "assoc_iou_thresh": 0,
+      "det_nms_thresh": 0.1,
+      "new_det_thresh": 0.7,
+      "hotstart_delay": 15,
+      "hotstart_unmatch_thresh": 8,
+      "hotstart_dup_thresh": 8,
+      "suppress_unmatched_within_hotstart": true,
+      "min_trk_keep_alive": -1,
+      "max_trk_keep_alive": 30,
+      "init_trk_keep_alive": 30,
+      "suppress_overlap_occlusion_thresh": 0.7,
+      "suppress_det_at_boundary": false,
+      "fill_hole_area": 16,
+      "recondition_every_nth_frame": 16,
+      "enable_masklet_confirmation": false,
+      "decrease_alive_for_empty_masks": false,
+      "image_size": 1008
+    },
+    "class_type": "easy sam3VideoModelExtraConfig",
+    "_meta": {
+      "title": "SAM3 Video Model Extra Config"
+    }
+  },
+  "553:70": {
+    "inputs": {
+      "mask": [
+        "553:67",
+        3
+      ]
+    },
+    "class_type": "MaskToImage",
+    "_meta": {
+      "title": "Convert Mask to Image"
+    }
+  },
+  "553:71": {
+    "inputs": {
+      "images": [
+        "553:70",
+        0
+      ]
+    },
+    "class_type": "ImageListToBatch_",
+    "_meta": {
+      "title": "Image List To Batch ♾️Mixlab"
+    }
+  },
+  "553:67": {
+    "inputs": {
+      "prompt": "wall",
+      "frame_index": 0,
+      "object_id": 1,
+      "score_threshold_detection": 0.5,
+      "new_det_thresh": 0.7,
+      "propagation_direction": "both",
+      "start_frame_index": 0,
+      "max_frames_to_track": -1,
+      "close_after_propagation": true,
+      "keep_model_loaded": true,
+      "sam3_model": [
+        "553:68",
+        0
+      ],
+      "video_frames": [
+        "544:541",
+        0
+      ],
+      "extra_config": [
+        "553:66",
+        0
+      ]
+    },
+    "class_type": "easy sam3VideoSegmentation",
+    "_meta": {
+      "title": "SAM3 Video Segmentation"
+    }
+  }
+}

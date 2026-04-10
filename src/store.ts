@@ -5,7 +5,8 @@ import { DEFAULT_PROMPTS } from './types'
 interface AppStore extends AppState {
   setPhase: (phase: Phase) => void
   setOriginalImage: (image: string, width: number, height: number) => void
-  setMasks: (refinedMask: string, rawMask: string, masks: MaskInfo[]) => void
+  setMasks: (enforcedResult: string, maskImages: string[], masks: MaskInfo[]) => void
+  setMaskImages: (maskImages: string[], masks: MaskInfo[]) => void
   setProcessingStep: (step: 0 | 1 | 2 | 3 | 4) => void
   addProcessingRegion: (maskId: number) => void
   removeProcessingRegion: (maskId: number) => void
@@ -37,6 +38,7 @@ const initialState: AppState = {
   dimensions: { width: 0, height: 0 },
   refinedMask: null,
   rawMask: null,
+  maskImages: [],
   masks: [],
   compositeImage: null,
   finalImage: null,
@@ -65,7 +67,20 @@ export const useStore = create<AppStore>((set, get) => ({
     appliedRegions: new Map<number, string>(),
   }),
 
-  setMasks: (refinedMask, rawMask, masks) => set({ refinedMask, rawMask, masks }),
+  setMasks: (enforcedResult, maskImages, masks) => set((state) => ({
+    originalImage: enforcedResult,
+    maskImages,
+    masks,
+    refinedMask: null,
+    rawMask: null,
+    // Clear composite/final when masks are reset
+    compositeImage: null,
+    finalImage: null,
+    appliedRegions: new Map<number, string>(),
+    dimensions: state.dimensions,
+  })),
+
+  setMaskImages: (maskImages, masks) => set({ maskImages, masks }),
 
   setProcessingStep: (processingStep) => set({ processingStep }),
 
@@ -115,6 +130,7 @@ export const useStore = create<AppStore>((set, get) => ({
     dimensions: { width, height },
     refinedMask,
     rawMask,
+    maskImages: [],
     masks,
     compositeImage: null,
     finalImage: null,

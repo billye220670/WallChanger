@@ -1,53 +1,33 @@
 import { useEffect, useState } from 'react'
 import { useStore } from '../store'
-import { enhanceImage, processMasks, debugSegment, setBackendUrl } from '../utils/api'
+import { preprocessImage, setBackendUrl } from '../utils/api'
+import type { MaskInfo } from '../types'
 
-const STEPS = [
-  '增强原图',
-  '清理场景',
-  '识别区域',
-  '精炼蒙版',
-]
-
-const DEBUG_STEPS = [
-  '识别区域',
-]
-
-async function waitForModel(url: string, onStatusChange: (msg: string) => void, signal: { ignore: boolean }): Promise<void> {
-  let attempts = 0
-  while (!signal.ignore) {
-    try {
-      const resp = await fetch(`${url}/health`)
-      if (resp.ok) {
-        const health = await resp.json()
-        if (health.model_loaded) return
-        onStatusChange(`SAM3 模型加载中... (${attempts + 1})`)
-      } else {
-        onStatusChange('等待后端启动...')
-      }
-    } catch {
-      onStatusChange('等待后端启动...')
+function generateUniqueColor(existing: [number, number, number][]): [number, number, number] {
+  const MIN_DIST_SQ = 80 * 80
+  for (let attempt = 0; attempt < 300; attempt++) {
+    const r = Math.floor(Math.random() * 200) + 28
+    const g = Math.floor(Math.random() * 200) + 28
+    const b = Math.floor(Math.random() * 200) + 28
+    let ok = true
+    for (const [er, eg, eb] of existing) {
+      if ((r - er) ** 2 + (g - eg) ** 2 + (b - eb) ** 2 < MIN_DIST_SQ) { ok = false; break }
     }
-    attempts++
-    await new Promise(r => setTimeout(r, 3000))
+    if (ok) return [r, g, b]
   }
+  return [255, 128, 0]
 }
 
 export function ProcessingScreen() {
   const {
     originalImage,
     dimensions,
-    processingStep,
     backendUrl,
-    debugPrompts,
-    debugMode,
-    setProcessingStep,
     setOriginalImage,
     setMasks,
     setPhase,
   } = useStore()
 
-  const [waitingMsg, setWaitingMsg] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -58,49 +38,33 @@ export function ProcessingScreen() {
 
     async function run() {
       try {
-        if (debugMode) {
-          // Debug mode: skip preprocessing, just SAM3
-          setProcessingStep(1)
-          const result = await debugSegment(originalImage!)
-          if (signal.ignore) return
-          setProcessingStep(4)
-          setMasks(result.refinedMask, result.rawMask, result.masks)
-          setTimeout(() => setPhase('editing'), 300)
-        } else {
-          // Normal mode: full pipeline
-          setProcessingStep(0)
-          setWaitingMsg('SAM3 模型加载中...')
-          await waitForModel(backendUrl, setWaitingMsg, signal)
-          if (signal.ignore) return
-          setWaitingMsg(null)
+        const result = await preprocessImage(originalImage!)
+        if (signal.ignore) return
 
-          setProcessingStep(1)
-          const enh = await enhanceImage(originalImage!, dimensions.width, dimensions.height, debugPrompts.enhance)
-          if (signal.ignore) return
-          setOriginalImage(enh.enhancedImage, dimensions.width, dimensions.height)
+        // Build MaskInfo array: assign unique colors to each B&W mask
+        const colors: [number, number, number][] = []
+        const masks: MaskInfo[] = result.masks.map((_, i) => {
+          const color = generateUniqueColor(colors)
+          colors.push(color)
+          return { id: i, label: `wall_${i + 1}`, color }
+        })
 
-          setProcessingStep(2)
-          const result = await processMasks(enh.enhancedImage, debugPrompts.clean, debugPrompts.refine)
-          if (signal.ignore) return
-          setProcessingStep(4)
-          setMasks(result.refinedMask, result.rawMask, result.masks)
-          setTimeout(() => setPhase('editing'), 300)
-        }
+        setMasks(result.enforcedResult, result.masks, masks)
+        setTimeout(() => setPhase('editing'), 300)
       } catch (err) {
         if (signal.ignore) return
-        console.error('Processing failed:', err)
+        console.error('Preprocessing failed:', err)
         setError(err instanceof Error ? err.message : '处理失败，请重试')
       }
     }
 
     run()
-
     return () => { signal.ignore = true }
   }, [])
 
   return (
     <div className="fixed inset-0 bg-gray-950 flex flex-col items-center justify-center">
-      {/* Dimmed image */}
+      {/* Dimmed original image in background */}
       {originalImage && (
         <div className="absolute inset-0">
           <img
@@ -112,54 +76,14 @@ export function ProcessingScreen() {
         </div>
       )}
 
-      {/* Progress UI */}
       <div className="relative z-10 w-full max-w-sm px-6">
-        <h2 className="text-white text-center text-lg font-semibold mb-8">
-          {debugMode ? 'SAM3 识别中...' : 'AI 分析中...'}
-        </h2>
+        <h2 className="text-white text-center text-lg font-semibold mb-8">AI 分析中...</h2>
 
-        {/* Model waiting state */}
-        {waitingMsg && (
-          <div className="mb-6 flex items-center gap-3 bg-gray-800/80 rounded-xl px-4 py-3">
-            <div className="w-4 h-4 rounded-full border-2 border-yellow-400 border-t-transparent animate-spin flex-shrink-0" />
-            <span className="text-yellow-300 text-sm">{waitingMsg}</span>
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-blue-500">
+            <div className="w-3 h-3 rounded-full border-2 border-white border-t-transparent animate-spin" />
           </div>
-        )}
-
-        <div className="space-y-4">
-          {(debugMode ? DEBUG_STEPS : STEPS).map((label, index) => {
-            const stepNum = index + 1
-            const isCompleted = processingStep > stepNum
-            const isActive = processingStep === stepNum && !waitingMsg
-            const isPending = processingStep < stepNum
-
-            return (
-              <div key={label} className="flex items-center gap-3">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-                  isCompleted ? 'bg-green-500' :
-                  isActive ? 'bg-blue-500' :
-                  'bg-gray-800'
-                }`}>
-                  {isCompleted ? (
-                    <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                    </svg>
-                  ) : isActive ? (
-                    <div className="w-3 h-3 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                  ) : (
-                    <span className="text-gray-600 text-xs">{stepNum}</span>
-                  )}
-                </div>
-                <span className={`text-sm ${
-                  isCompleted ? 'text-green-400' :
-                  isActive ? 'text-white' :
-                  isPending ? 'text-gray-600' : 'text-gray-400'
-                }`}>
-                  {label}
-                </span>
-              </div>
-            )
-          })}
+          <span className="text-sm text-white">识别墙面区域</span>
         </div>
 
         {error ? (

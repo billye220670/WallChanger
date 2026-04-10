@@ -3,6 +3,11 @@ import type { MaskInfo } from '../types'
 let offscreenCanvas: HTMLCanvasElement | null = null
 let offscreenCtx: CanvasRenderingContext2D | null = null
 
+// ── B&W mask canvases (one per wall region from ComfyUI) ─────────────────────
+let bwMaskCanvases: HTMLCanvasElement[] = []
+let bwMaskWidth  = 0
+let bwMaskHeight = 0
+
 // ── Pre-computed edge SDF per mask (keyed by mask ID) ───────────────────────
 // sdf        = outward distance from smoothed edge (for glow); 0=edge, 255=deep interior
 // smoothMask = box-blurred 0..255; used as anti-aliased fill alpha in shimmers
@@ -176,23 +181,56 @@ let hitMasks: MaskInfo[] = []
 
 /**
  * Call once after loadMaskIntoOffscreen() + masks are known.
- * Pipeline per mask:
- *   1. Nearest-neighbour colour assignment for hit-testing
- *   2. BFS → largest connected component (binary inLargest)
- *   3. Box-blur inLargest → smoothMask (anti-aliased fill alpha)
- *   4. Threshold smoothMask at 50% → smoothBinary
- *   5. Build outward SDF from smoothBinary (smoother glow trace)
- *   6. Build inward SDF → edgeAlpha (feathered compositing blend)
+ * Supports two modes:
+ *   - B&W mode (bwMaskCanvases populated): each canvas is a binary mask for one region
+ *   - Legacy color mode (offscreenCanvas populated): nearest-neighbour color assignment
  */
 export function precomputeMaskOutlines(masks: MaskInfo[]): void {
-  if (!offscreenCtx || !offscreenCanvas || masks.length === 0) return
+  if (masks.length === 0) return
+
+  const useBW = bwMaskCanvases.length > 0
+
+  if (useBW) {
+    _precomputeFromBWMasks(masks)
+  } else if (offscreenCtx && offscreenCanvas) {
+    _precomputeFromColorMask(masks)
+  }
+}
+
+function _precomputeFromBWMasks(masks: MaskInfo[]): void {
   maskSDFs.clear()
-  const W = offscreenCanvas.width
-  const H = offscreenCanvas.height
-  const pixels = offscreenCtx.getImageData(0, 0, W, H).data
+  const W = bwMaskWidth
+  const H = bwMaskHeight
+  if (!W || !H) return
   const total = W * H
 
-  // Step 1 — nearest-neighbour colour assignment (shared across masks)
+  // Build hitAssignment from B&W canvases
+  // For each pixel, find which mask canvas has white (>128) at that position.
+  // If multiple masks overlap (shouldn't happen), last one wins.
+  const assignment = new Int16Array(total).fill(-1)
+
+  for (let mi = 0; mi < Math.min(masks.length, bwMaskCanvases.length); mi++) {
+    const bwCanvas = bwMaskCanvases[mi]
+    const bwCtx = bwCanvas.getContext('2d', { willReadFrequently: true })!
+    const pixels = bwCtx.getImageData(0, 0, W, H).data
+    for (let i = 0; i < total; i++) {
+      // B&W mask: white region = this wall. Use red channel as brightness.
+      if (pixels[i * 4] > 128) {
+        assignment[i] = mi
+      }
+    }
+  }
+
+  _buildSDFs(masks, assignment, W, H, total)
+}
+
+function _precomputeFromColorMask(masks: MaskInfo[]): void {
+  maskSDFs.clear()
+  const W = offscreenCanvas!.width
+  const H = offscreenCanvas!.height
+  const pixels = offscreenCtx!.getImageData(0, 0, W, H).data
+  const total = W * H
+
   const assignment = new Int16Array(total).fill(-1)
   for (let i = 0; i < total; i++) {
     const r = pixels[i * 4], g = pixels[i * 4 + 1], b = pixels[i * 4 + 2]
@@ -206,7 +244,10 @@ export function precomputeMaskOutlines(masks: MaskInfo[]): void {
     assignment[i] = bestMi
   }
 
-  // Shared typed arrays to avoid GC pressure across mask iterations
+  _buildSDFs(masks, assignment, W, H, total)
+}
+
+function _buildSDFs(masks: MaskInfo[], assignment: Int16Array, W: number, H: number, total: number): void {
   const bfsQueue  = new Int32Array(total)
   const visited   = new Uint8Array(total)
   const inLargest = new Uint8Array(total)
@@ -250,13 +291,9 @@ export function precomputeMaskOutlines(masks: MaskInfo[]): void {
     }
 
     // ── 3: Box-blur inLargest → smoothMask 0..255 ───────────────────────────
-    // Blurring the binary map turns the hard 0/1 staircase boundary into a
-    // gradual ramp, eliminating aliasing in shimmer rendering at all scales.
     const smoothMask = boxBlur(inLargest, W, H, BLUR_RADIUS)
 
     // ── 4: Threshold smoothMask at 50% → smoothBinary ───────────────────────
-    // Use this rounded edge for SDF computation so the glow traces a smooth
-    // contour instead of the original pixel-staircase.
     const smoothBinary = new Uint8Array(total)
     for (let i = 0; i < total; i++) smoothBinary[i] = smoothMask[i] >= 128 ? 1 : 0
 
@@ -281,8 +318,8 @@ export function precomputeMaskOutlines(masks: MaskInfo[]): void {
   }
 
   hitAssignment = assignment
-  hitW = W
-  hitH = H
+  hitW = bwMaskCanvases.length > 0 ? bwMaskWidth : offscreenCanvas!.width
+  hitH = bwMaskCanvases.length > 0 ? bwMaskHeight : offscreenCanvas!.height
   hitMasks = masks
 }
 
@@ -489,24 +526,112 @@ function generateUniqueColor(
 /**
  * Split a mask region in two using an infinite line (half-plane classification).
  *
- * Line is defined by (x1,y1)→(x2,y2) in mask-resolution image pixels.
- * Pixels where cross(lineDir, pixel−lineStart) >= 0 → keep original color (side A).
- * Pixels where cross < 0 → get a freshly generated unique color (side B).
+ * Works in B&W mask mode: finds the bwMaskCanvas for maskId, splits its white
+ * pixels into side-A (kept) and side-B (new canvas).
  *
- * Modifies the offscreen canvas in-place and exports it as the new mask PNG.
- * Returns null if the line doesn't actually split the mask (all pixels on one side),
- * or if the canvas / hitAssignment is not ready.
+ * Falls back to legacy color-mask mode if bwMaskCanvases is empty.
+ *
+ * Returns null if the line doesn't split the region.
  */
 export function splitMaskByLine(
   maskId: number,
   x1: number, y1: number,
   x2: number, y2: number,
   existingMasks: MaskInfo[]
-): { newMaskBase64: string; newMask: MaskInfo } | null {
-  if (!offscreenCtx || !offscreenCanvas || !hitAssignment) return null
-
+): { updatedMaskBase64: string; newMaskBase64: string; newMask: MaskInfo } | null {
   const mi = hitMasks.findIndex(m => m.id === maskId)
   if (mi === -1) return null
+
+  const useBW = bwMaskCanvases.length > 0
+
+  if (useBW) {
+    return _splitBWMask(mi, maskId, x1, y1, x2, y2, existingMasks)
+  } else {
+    return _splitColorMask(mi, maskId, x1, y1, x2, y2, existingMasks)
+  }
+}
+
+function _splitBWMask(
+  mi: number,
+  maskId: number,
+  x1: number, y1: number,
+  x2: number, y2: number,
+  existingMasks: MaskInfo[]
+): { updatedMaskBase64: string; newMaskBase64: string; newMask: MaskInfo } | null {
+  const bwCanvas = bwMaskCanvases[mi]
+  if (!bwCanvas) return null
+
+  const W  = bwCanvas.width
+  const H  = bwCanvas.height
+  const dx = x2 - x1
+  const dy = y2 - y1
+
+  const bwCtx = bwCanvas.getContext('2d', { willReadFrequently: true })!
+  const imgData = bwCtx.getImageData(0, 0, W, H)
+  const d = imgData.data
+
+  // Count pixels on each side
+  let sideACount = 0, sideBCount = 0
+  for (let py = 0; py < H; py++) {
+    for (let px = 0; px < W; px++) {
+      const i = py * W + px
+      if (d[i * 4] <= 128) continue  // black pixel, skip
+      const cross = dx * (py - y1) - dy * (px - x1)
+      if (cross >= 0) sideACount++
+      else sideBCount++
+    }
+  }
+  if (sideACount === 0 || sideBCount === 0) return null
+
+  // Create new canvas for side-B
+  const newCanvas = document.createElement('canvas')
+  newCanvas.width = W
+  newCanvas.height = H
+  const newCtx = newCanvas.getContext('2d', { willReadFrequently: true })!
+  const newData = newCtx.createImageData(W, H)
+  const nd = newData.data
+
+  // Split: side-B pixels → new canvas (white), cleared from original
+  for (let py = 0; py < H; py++) {
+    for (let px = 0; px < W; px++) {
+      const i = py * W + px
+      if (d[i * 4] <= 128) continue
+      const cross = dx * (py - y1) - dy * (px - x1)
+      if (cross < 0) {
+        // Side B: move to new canvas
+        d[i * 4] = 0; d[i * 4 + 1] = 0; d[i * 4 + 2] = 0; d[i * 4 + 3] = 255
+        nd[i * 4] = 255; nd[i * 4 + 1] = 255; nd[i * 4 + 2] = 255; nd[i * 4 + 3] = 255
+      }
+    }
+  }
+
+  bwCtx.putImageData(imgData, 0, 0)
+  newCtx.putImageData(newData, 0, 0)
+
+  // Register new canvas
+  const newColor = generateUniqueColor(existingMasks.map(m => m.color))
+  const newId    = Math.max(...existingMasks.map(m => m.id)) + 1
+  bwMaskCanvases.push(newCanvas)
+
+  const updatedMaskBase64 = bwCanvas.toDataURL('image/png').split(',')[1]
+  const newMaskBase64     = newCanvas.toDataURL('image/png').split(',')[1]
+  const newMask: MaskInfo = {
+    id:    newId,
+    label: `${hitMasks[mi].label} B`,
+    color: newColor,
+  }
+
+  return { updatedMaskBase64, newMaskBase64, newMask }
+}
+
+function _splitColorMask(
+  mi: number,
+  maskId: number,
+  x1: number, y1: number,
+  x2: number, y2: number,
+  existingMasks: MaskInfo[]
+): { updatedMaskBase64: string; newMaskBase64: string; newMask: MaskInfo } | null {
+  if (!offscreenCtx || !offscreenCanvas || !hitAssignment) return null
 
   const W  = offscreenCanvas.width
   const H  = offscreenCanvas.height
@@ -516,7 +641,6 @@ export function splitMaskByLine(
   const imgData = offscreenCtx.getImageData(0, 0, W, H)
   const d       = imgData.data
 
-  // Count pixels on each side first to reject degenerate splits
   let side2Count = 0, totalCount = 0
   for (let py = 0; py < H; py++) {
     for (let px = 0; px < W; px++) {
@@ -530,7 +654,6 @@ export function splitMaskByLine(
   const newColor = generateUniqueColor(existingMasks.map(m => m.color))
   const [nr, ng, nb] = newColor
 
-  // Second pass: paint side-B pixels
   for (let py = 0; py < H; py++) {
     for (let px = 0; px < W; px++) {
       const i = py * W + px
@@ -546,15 +669,15 @@ export function splitMaskByLine(
 
   offscreenCtx.putImageData(imgData, 0, 0)
 
-  const newMaskBase64 = offscreenCanvas.toDataURL('image/png').split(',')[1]
-  const newId         = Math.max(...existingMasks.map(m => m.id)) + 1
+  const updatedMaskBase64 = offscreenCanvas.toDataURL('image/png').split(',')[1]
+  const newId = Math.max(...existingMasks.map(m => m.id)) + 1
   const newMask: MaskInfo = {
     id:    newId,
     label: `${hitMasks[mi].label} B`,
     color: newColor,
   }
 
-  return { newMaskBase64, newMask }
+  return { updatedMaskBase64, newMaskBase64: updatedMaskBase64, newMask }
 }
 
 /**
@@ -597,6 +720,10 @@ export function initOffscreenCanvas(width: number, height: number) {
   offscreenCanvas.width = width
   offscreenCanvas.height = height
   offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: true })!
+  // Reset B&W canvases when a new image is loaded
+  bwMaskCanvases = []
+  bwMaskWidth  = 0
+  bwMaskHeight = 0
 }
 
 export function loadMaskIntoOffscreen(maskBase64: string): Promise<void> {
@@ -608,6 +735,41 @@ export function loadMaskIntoOffscreen(maskBase64: string): Promise<void> {
       resolve()
     }
     img.src = `data:image/png;base64,${maskBase64}`
+  })
+}
+
+/**
+ * Load multiple B&W mask images (one per wall region) into separate offscreen canvases.
+ * Each canvas stores a binary mask: white = this wall region, black = background.
+ * Call this instead of loadMaskIntoOffscreen when using the ComfyUI B&W mask pipeline.
+ */
+export function loadBWMasksIntoOffscreen(
+  maskBase64List: string[],
+  width: number,
+  height: number,
+): Promise<void> {
+  bwMaskCanvases = []
+  bwMaskWidth  = width
+  bwMaskHeight = height
+
+  const promises = maskBase64List.map((b64) => {
+    return new Promise<HTMLCanvasElement>((resolve) => {
+      const canvas = document.createElement('canvas')
+      canvas.width  = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d', { willReadFrequently: true })!
+      const img = new Image()
+      img.onload = () => {
+        ctx.drawImage(img, 0, 0, width, height)
+        resolve(canvas)
+      }
+      img.onerror = () => resolve(canvas)  // empty canvas on error
+      img.src = `data:image/png;base64,${b64}`
+    })
+  })
+
+  return Promise.all(promises).then((canvases) => {
+    bwMaskCanvases = canvases
   })
 }
 
@@ -662,8 +824,6 @@ export function compositeRegion(
   maskId?: number
 ): Promise<void> {
   return new Promise((resolve) => {
-    if (!offscreenCtx) { resolve(); return }
-
     const resultImg = new Image()
     resultImg.onload = () => {
       const tempCanvas = document.createElement('canvas')
@@ -701,9 +861,9 @@ export function compositeRegion(
             }
           }
         }
-      } else {
+      } else if (offscreenCtx) {
         // Fallback: colour-match against the raw mask image
-        const maskData = offscreenCtx!.getImageData(0, 0, width, height)
+        const maskData = offscreenCtx.getImageData(0, 0, width, height)
         const [tr, tg, tb] = targetColor
         const tolerance = 10
         for (let i = 0; i < maskData.data.length; i += 4) {
