@@ -1,23 +1,25 @@
 @echo off
+chcp 65001 >nul 2>&1
+
 echo ============================================
-echo  WallChanger - 依赖安装
+echo  WallChanger - Install Dependencies
 echo ============================================
 echo.
 
-:: 检查 Node.js
+:: Check Node.js
 where node >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [错误] 未找到 Node.js，请先安装 Node.js: https://nodejs.org
+    echo [ERROR] Node.js not found. Please install: https://nodejs.org
     pause
     exit /b 1
 )
 echo [OK] Node.js:
 node -v
 
-:: 检查 Python
+:: Check Python
 where python >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [错误] 未找到 Python，请先安装 Python 3.10+: https://www.python.org
+    echo [ERROR] Python not found. Please install Python 3.10+: https://www.python.org
     pause
     exit /b 1
 )
@@ -25,29 +27,29 @@ echo [OK] Python:
 python --version
 
 echo.
-echo [1/2] 安装前端依赖 (npm install)...
+echo [1/2] Installing frontend dependencies (npm install)...
 npm install
 if %errorlevel% neq 0 (
-    echo [错误] 前端依赖安装失败
+    echo [ERROR] Frontend install failed
     pause
     exit /b 1
 )
-echo [OK] 前端依赖安装完成
+echo [OK] Frontend dependencies installed
 
 echo.
-echo [2/2] 安装后端依赖 (pip install)...
+echo [2/2] Installing backend dependencies (pip install)...
 cd backend
 python -m pip install -r requirements.txt
 if %errorlevel% neq 0 (
-    echo [错误] 后端依赖安装失败
+    echo [ERROR] Backend install failed
     pause
     exit /b 1
 )
 cd ..
-echo [OK] 后端依赖安装完成
+echo [OK] Backend dependencies installed
 
 echo.
 echo ============================================
-echo  安装完成！现在可以运行 start.bat 启动项目
+echo  Done! Now run start.bat to launch.
 echo ============================================
 pause
