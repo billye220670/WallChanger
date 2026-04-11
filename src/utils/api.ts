@@ -103,12 +103,30 @@ export async function debugSegment(
   return data
 }
 
-export async function applyMaterialV2(
+export async function renderAll(
+  enforcedImage: string,
+  masks: string[],
+  items: Array<{ x: number; y: number; materialImage: string; prompt?: string }>
+): Promise<{ finalImage: string }> {
+  const resp = await fetch(`${backendUrl}/api/v2/render-all`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enforcedImage, masks, items }),
+  })
+  if (!resp.ok) {
+    const text = await resp.text()
+    console.error('[render-all] error response:', resp.status, text)
+    throw new Error(`Render-all failed: ${resp.status} — ${text}`)
+  }
+  return resp.json()
+}
+
+export async function renderRegion(
   enforcedImage: string,
   maskImage: string,
   materialImage: string,
 ): Promise<{ resultImage: string }> {
-  const resp = await fetch(`${backendUrl}/api/v2/apply-material`, {
+  const resp = await fetch(`${backendUrl}/api/v2/render`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enforcedImage, maskImage, materialImage }),

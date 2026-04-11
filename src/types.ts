@@ -28,6 +28,14 @@ export const DEFAULT_PROMPTS: DebugPrompts = {
   finalize:      'realistic render',
 }
 
+export interface BatchItem {
+  id: number
+  imgX: number       // 相对于 enforcedImage 的像素坐标 X
+  imgY: number       // 相对于 enforcedImage 的像素坐标 Y
+  material: Material
+  materialB64: string  // 材质图片的 raw base64（预加载）
+}
+
 export interface AppState {
   phase: Phase
 
@@ -50,6 +58,10 @@ export interface AppState {
   // Drag state
   draggingMaterial: Material | null
   hoveredMaskId: number | null
+
+  // Batch mode
+  batchMode: boolean
+  batchItems: BatchItem[]
 
   // Config
   backendUrl: string

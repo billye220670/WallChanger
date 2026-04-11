@@ -19,7 +19,7 @@ load_dotenv()
 SAM3_API = os.getenv("SAM3_API", "https://sh-llm-api.tinttex.cn:8443/sam3/segment")
 
 # ── ComfyUI API ──────────────────────────────────────────────────────────────
-COMFYUI_HOST = os.getenv("COMFYUI_HOST", "http://192.168.31.44:8188")
+COMFYUI_HOST = os.getenv("COMFYUI_HOST", "http://127.0.0.1:8188")
 
 # ── Materials path ───────────────────────────────────────────────────────────
 # Relative to this file's directory (backend/) → ../public/materials
@@ -793,6 +793,19 @@ class FinalizeV2Request(BaseModel):
     compositeImage: str  # raw base64 PNG — all regions composited
 
 
+class RenderAllItem(BaseModel):
+    x: int                    # 用户点击位置 X 坐标（相对于 enforcedImage 的像素坐标）
+    y: int                    # 用户点击位置 Y 坐标
+    materialImage: str        # 材质参考图 raw base64
+    prompt: str = "based on image 2, change all wall material in image 1."  # 该区域的替换提示词（预留）
+
+
+class RenderAllRequest(BaseModel):
+    enforcedImage: str        # preprocess 返回的 enforcedResult, raw base64
+    masks: list[str]          # preprocess 返回的 masks[] B&W蒙版数组, 每个元素为 raw base64 PNG
+    items: list[RenderAllItem]  # 要替换的区域列表
+
+
 async def call_comfyui_apply_material(
     enforced: Image.Image,
     mask: Image.Image,
@@ -1032,8 +1045,9 @@ async def v2_preprocess(req: PreprocessRequest):
     }
 
 
+@app.post("/api/v2/render")
 @app.post("/api/v2/apply-material")
-async def v2_apply_material(req: "ApplyMaterialV2Request"):
+async def v2_render_region(req: "ApplyMaterialV2Request"):
     """
     Apply a material to one wall region using the 区域洗图 ComfyUI workflow.
     Inputs:
@@ -1047,7 +1061,7 @@ async def v2_apply_material(req: "ApplyMaterialV2Request"):
     enforced = base64_to_image(req.enforcedImage)
     mask     = base64_to_image(req.maskImage)
     material = base64_to_image(req.materialImage)
-    print(f"[v2/apply-material] enforced={enforced.size} mask={mask.size} material={material.size}")
+    print(f"[v2/render] enforced={enforced.size} mask={mask.size} material={material.size}")
 
     result = await call_comfyui_apply_material(enforced, mask, material)
     result.save(DEBUG_DIR / "apply_material_result.png")
@@ -1067,6 +1081,82 @@ async def v2_finalize(req: "FinalizeV2Request"):
 
     final = await call_comfyui_finalize(composite)
     final.save(DEBUG_DIR / "v2_final.png")
+
+    return {"finalImage": image_to_base64(final, "PNG")}
+
+
+@app.post("/api/v2/render-all")
+async def v2_render_all(req: RenderAllRequest):
+    """
+    Batch render: match masks by coordinate, apply materials, composite, and finalize.
+    For each item, finds the mask where (x,y) is white, applies the material via ComfyUI,
+    composites RGBA results onto the base image, then runs the finalize workflow.
+    Returns the final polished image.
+    """
+    if not req.items:
+        raise HTTPException(400, detail="items list is empty")
+
+    base_image = base64_to_image(req.enforcedImage).convert("RGB")
+    masks_pil = [base64_to_image(m) for m in req.masks]
+    print(f"[v2/render-all] base={base_image.size} masks={len(masks_pil)} items={len(req.items)}")
+
+    # 为每个 item 匹配蒙版，并去重（同一蒙版取最后一个 item）
+    region_map = {}  # mask_index -> item
+    for item in req.items:
+        matched_idx = None
+        for i, mask in enumerate(masks_pil):
+            gray = mask.convert("L")
+            cx = max(0, min(item.x, gray.width - 1))
+            cy = max(0, min(item.y, gray.height - 1))
+            if gray.getpixel((cx, cy)) > 128:
+                matched_idx = i
+                break
+        if matched_idx is not None:
+            region_map[matched_idx] = item  # 后面的覆盖前面的（去重）
+            print(f"[v2/render-all] point ({item.x},{item.y}) → mask #{matched_idx}")
+        else:
+            print(f"[v2/render-all] WARNING: point ({item.x},{item.y}) matched no mask, skipping")
+
+    if not region_map:
+        raise HTTPException(400, detail="No items matched any mask region")
+
+    # 逐区域渲染
+    success_count = 0
+    for mask_idx, item in region_map.items():
+        try:
+            enforced = base64_to_image(req.enforcedImage)
+            mask = masks_pil[mask_idx]
+            material = base64_to_image(item.materialImage)
+            print(f"[v2/render-all] rendering mask #{mask_idx} material={material.size}")
+
+            result_rgba = await call_comfyui_apply_material(enforced, mask, material)
+
+            # Ensure RGBA mode for alpha compositing
+            if result_rgba.mode != "RGBA":
+                result_rgba = result_rgba.convert("RGBA")
+
+            # Resize result to match base if needed
+            if result_rgba.size != base_image.size:
+                result_rgba = result_rgba.resize(base_image.size, Image.LANCZOS)
+
+            # Alpha-composite onto base
+            base_image.paste(result_rgba, (0, 0), result_rgba.split()[3])
+            success_count += 1
+            print(f"[v2/render-all] mask #{mask_idx} composited successfully")
+
+        except Exception as e:
+            print(f"[v2/render-all] mask #{mask_idx} FAILED: {e}")
+            continue
+
+    if success_count == 0:
+        raise HTTPException(500, detail="All region renders failed")
+
+    print(f"[v2/render-all] {success_count}/{len(region_map)} regions rendered, running finalize...")
+    base_image.save(DEBUG_DIR / "v2_render_all_composite.png")
+
+    # Finalize
+    final = await call_comfyui_finalize(base_image)
+    final.save(DEBUG_DIR / "v2_render_all_final.png")
 
     return {"finalImage": image_to_base64(final, "PNG")}
 

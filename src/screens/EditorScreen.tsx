@@ -5,7 +5,8 @@ import { ImageCanvas, type ImageCanvasHandle } from '../components/ImageCanvas'
 import { MaterialDrawer } from '../components/MaterialDrawer'
 import { DragPreview } from '../components/DragPreview'
 import { DebugPanel, type DebugFlags } from '../components/DebugPanel'
-import { applyMaterialV2, setBackendUrl } from '../utils/api'
+import { renderRegion, setBackendUrl } from '../utils/api'
+import type { BatchItem } from '../types'
 import { getMaskAtPixel, compositeRegion, precomputeMaskOutlines, drawMaskOutline, drawMaskShimmer, drawProcessingShimmer, drawMaskDim, splitMaskByLine, loadBWMasksIntoOffscreen } from '../utils/canvas'
 import { touchToImageCoords } from '../utils/coords'
 
@@ -31,6 +32,8 @@ export function EditorScreen() {
     rawMask,
     isApplying,
     debugPrompts,
+    batchMode,
+    batchItems,
     setDraggingMaterial,
     setHoveredMaskId,
     addProcessingRegion,
@@ -41,6 +44,10 @@ export function EditorScreen() {
     setDebugPrompts,
     setMaskImages,
     setIsApplying,
+    setBatchMode,
+    addBatchItem,
+    removeBatchItem,
+    clearBatchItems,
   } = useStore()
 
   const canvasRef           = useRef<ImageCanvasHandle>(null)
@@ -279,10 +286,29 @@ export function EditorScreen() {
     const mask = getMaskAtPixel(imgX, imgY)
     if (!mask) { setHoveredMaskId(null); return false }
 
-    // Synchronous lock — ComfyUI can only handle one job at a time
-    if (isApplying) { setHoveredMaskId(null); return false }
-
     setHoveredMaskId(null)
+
+    // ── Batch mode: collect data, don't render ──
+    if (batchMode) {
+      try {
+        const matResp = await fetch(`${backendUrl}/materials/${material.filename}`)
+        const matBlob = await matResp.blob()
+        const materialB64 = await new Promise<string>((resolve) => {
+          const reader = new FileReader()
+          reader.onload = (e) => resolve((e.target!.result as string).split(',')[1])
+          reader.readAsDataURL(matBlob)
+        })
+        addBatchItem({ imgX, imgY, material, materialB64 })
+      } catch (err) {
+        console.error('Failed to load material:', err)
+      }
+      return true
+    }
+
+    // ── Original render logic ──
+    // Synchronous lock — ComfyUI can only handle one job at a time
+    if (isApplying) { return false }
+
     setIsApplying(true)
     addProcessingRegion(mask.id)
 
@@ -301,7 +327,7 @@ export function EditorScreen() {
         reader.readAsDataURL(matBlob)
       })
 
-      const result = await applyMaterialV2(originalImage, maskImageB64, materialB64)
+      const result = await renderRegion(originalImage, maskImageB64, materialB64)
       setAppliedRegion(mask.id, result.resultImage)
 
       // Composite: draw the RGBA result (with alpha) directly onto the canvas
@@ -325,7 +351,7 @@ export function EditorScreen() {
       setIsApplying(false)
     }
     return true
-  }, [draggingMaterial, dimensions, masks, maskImages, originalImage, backendUrl, isApplying])
+  }, [draggingMaterial, dimensions, masks, maskImages, originalImage, backendUrl, isApplying, batchMode, addBatchItem])
 
   // ── Click-to-select (normal mode) ────────────────────────────────────────
   const handleImageClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
@@ -549,6 +575,37 @@ export function EditorScreen() {
             className="absolute inset-0 w-full h-full pointer-events-none"
             style={{ zIndex: 20 }}
           />
+
+          {/* Batch mode material pins */}
+          {batchMode && batchItems.map((item) => {
+            const displayX = (item.imgX / dimensions.width) * imgBox.w
+            const displayY = (item.imgY / dimensions.height) * imgBox.h
+            return (
+              <div
+                key={item.id}
+                className="absolute z-30 group"
+                style={{
+                  left: displayX - 20,
+                  top: displayY - 20,
+                  width: 40,
+                  height: 40,
+                }}
+              >
+                <img
+                  src={`${backendUrl}/materials/${item.material.filename}`}
+                  alt={item.material.name}
+                  className="w-full h-full rounded-full object-cover border-2 border-white shadow-lg"
+                  crossOrigin="anonymous"
+                />
+                <button
+                  onClick={(e) => { e.stopPropagation(); removeBatchItem(item.id) }}
+                  className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  ×
+                </button>
+              </div>
+            )
+          })}
         </div>
 
         {/* Debug panel */}
@@ -585,17 +642,38 @@ export function EditorScreen() {
         {/* ── Normal mode buttons ──────────────────────────────────────── */}
         {!editing && (
           <>
+            {/* Batch mode toggle (top-left) */}
+            <div className="absolute top-4 left-4 z-40 flex items-center gap-2 bg-black/60 backdrop-blur-sm rounded-full px-3 py-1.5 border border-white/10">
+              <span className="text-white text-xs">后端测试</span>
+              <button
+                onClick={() => setBatchMode(!batchMode)}
+                className={`relative w-10 h-5 rounded-full transition-colors ${
+                  batchMode ? 'bg-green-500' : 'bg-gray-600'
+                }`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                  batchMode ? 'translate-x-5' : ''
+                }`} />
+              </button>
+            </div>
+
             {/* FAB 一键焕色 */}
             <button
-              onClick={() => setPhase('finalizing')}
-              disabled={isProcessing}
+              onClick={() => {
+                if (batchMode && batchItems.length > 0) {
+                  setPhase('finalizing')
+                } else if (!batchMode) {
+                  setPhase('finalizing')
+                }
+              }}
+              disabled={isProcessing || (batchMode && batchItems.length === 0)}
               className={`absolute bottom-20 right-4 z-40 px-4 py-3 rounded-full font-bold text-white shadow-2xl transition-all ${
-                isProcessing
+                isProcessing || (batchMode && batchItems.length === 0)
                   ? 'bg-gray-700 opacity-60 cursor-not-allowed'
                   : 'bg-gradient-to-r from-purple-600 to-blue-600 hover:scale-105 active:scale-95'
               }`}
             >
-              一键焕色
+              一键焕色 {batchMode && batchItems.length > 0 ? `(${batchItems.length})` : ''}
             </button>
 
             {/* Edit button */}

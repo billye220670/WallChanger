@@ -1,30 +1,56 @@
 import { useEffect } from 'react'
 import { useStore } from '../store'
-import { finalizeV2, setBackendUrl } from '../utils/api'
+import { finalizeV2, renderAll, setBackendUrl } from '../utils/api'
 
 export function FinalizingScreen() {
   const {
     compositeImage,
     originalImage,
+    maskImages,
     backendUrl,
+    batchMode,
+    batchItems,
     setFinalImage,
     setPhase,
+    clearBatchItems,
   } = useStore()
 
   useEffect(() => {
     setBackendUrl(backendUrl)
-    const imageToFinalize = compositeImage || originalImage
-    if (!imageToFinalize) return
 
-    finalizeV2(imageToFinalize)
-      .then((result) => {
-        setFinalImage(result.finalImage)
-        setPhase('done')
-      })
-      .catch((err) => {
-        console.error('Finalize failed:', err)
-        setPhase('editing')
-      })
+    if (batchMode && batchItems.length > 0) {
+      // ── Batch render-all flow ──
+      const items = batchItems.map(item => ({
+        x: item.imgX,
+        y: item.imgY,
+        materialImage: item.materialB64,
+      }))
+
+      renderAll(originalImage!, maskImages, items)
+        .then((result) => {
+          setFinalImage(result.finalImage)
+          clearBatchItems()
+          setPhase('done')
+        })
+        .catch((err) => {
+          console.error('Batch render-all failed:', err)
+          setPhase('editing')
+        })
+    } else {
+      // ── Original finalize flow ──
+      const imageToFinalize = compositeImage || originalImage
+      if (!imageToFinalize) return
+
+      finalizeV2(imageToFinalize)
+        .then((result) => {
+          setFinalImage(result.finalImage)
+          setPhase('done')
+        })
+        .catch((err) => {
+          console.error('Finalize failed:', err)
+          setPhase('editing')
+        })
+    }
   }, [])
 
   return (
@@ -35,8 +61,14 @@ export function FinalizingScreen() {
       {/* Ring spinner */}
       <div className="relative z-10 flex flex-col items-center gap-6">
         <div className="w-20 h-20 rounded-full border-4 border-purple-500 border-t-transparent animate-spin" />
-        <p className="text-white text-lg font-medium">正在魔法渲染...</p>
-        <p className="text-gray-500 text-sm">请耐心等待，AI 正在施展魔法</p>
+        <p className="text-white text-lg font-medium">
+          {batchMode ? '正在批量渲染...' : '正在魔法渲染...'}
+        </p>
+        <p className="text-gray-500 text-sm">
+          {batchMode
+            ? `正在处理 ${batchItems.length} 个区域，请耐心等待`
+            : '请耐心等待，AI 正在施展魔法'}
+        </p>
       </div>
     </div>
   )

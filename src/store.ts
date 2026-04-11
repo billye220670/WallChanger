@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AppState, MaskInfo, Material, Phase, DebugPrompts } from './types'
+import type { AppState, MaskInfo, Material, Phase, DebugPrompts, BatchItem } from './types'
 import { DEFAULT_PROMPTS } from './types'
 
 interface AppStore extends AppState {
@@ -19,6 +19,10 @@ interface AppStore extends AppState {
   setDebugPrompts: (prompts: DebugPrompts) => void
   setDebugMode: (enabled: boolean) => void
   setIsApplying: (v: boolean) => void
+  setBatchMode: (enabled: boolean) => void
+  addBatchItem: (item: Omit<BatchItem, 'id'>) => void
+  removeBatchItem: (id: number) => void
+  clearBatchItems: () => void
   loadExample: (originalImage: string, width: number, height: number, refinedMask: string, rawMask: string, masks: MaskInfo[]) => void
   reset: () => void
 }
@@ -49,6 +53,8 @@ const initialState: AppState = {
   isApplying: false,
   draggingMaterial: null,
   hoveredMaskId: null,
+  batchMode: false,
+  batchItems: [],
   backendUrl: savedBackendUrl,
   debugPrompts: loadSavedPrompts(),
   debugMode: localStorage.getItem('debugMode') === 'true',
@@ -129,6 +135,18 @@ export const useStore = create<AppStore>((set, get) => ({
 
   setIsApplying: (isApplying) => set({ isApplying }),
 
+  setBatchMode: (enabled) => set({ batchMode: enabled, batchItems: [] }),
+
+  addBatchItem: (item) => set((state) => ({
+    batchItems: [...state.batchItems, { ...item, id: Date.now() + Math.random() }],
+  })),
+
+  removeBatchItem: (id) => set((state) => ({
+    batchItems: state.batchItems.filter(i => i.id !== id),
+  })),
+
+  clearBatchItems: () => set({ batchItems: [] }),
+
   loadExample: (originalImage, width, height, refinedMask, rawMask, masks) => set({
     originalImage,
     dimensions: { width, height },
@@ -142,6 +160,8 @@ export const useStore = create<AppStore>((set, get) => ({
     processingRegions: new Set<number>(),
     processingStep: 4,
     phase: 'editing',
+    batchMode: false,
+    batchItems: [],
   }),
 
   reset: () => set({
@@ -150,5 +170,7 @@ export const useStore = create<AppStore>((set, get) => ({
     debugPrompts: get().debugPrompts,
     processingRegions: new Set<number>(),
     appliedRegions: new Map<number, string>(),
+    batchMode: false,
+    batchItems: [],
   }),
 }))

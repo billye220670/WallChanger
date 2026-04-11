@@ -19,7 +19,11 @@
       "Bash(git commit:*)",
       "Bash(git push:*)",
       "Bash(git rm:*)",
-      "Bash(tasklist)"
+      "Bash(tasklist)",
+      "Bash(ls:*)",
+      "Bash(find /c/Users/Tintt/Desktop/WallChanger/src -type f -name *.ts -o -name *.tsx)",
+      "Bash(git checkout:*)",
+      "Bash(npx tsc:*)"
     ]
   }
 }
