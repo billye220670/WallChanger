@@ -298,7 +298,7 @@ export function EditorScreen() {
           reader.onload = (e) => resolve((e.target!.result as string).split(',')[1])
           reader.readAsDataURL(matBlob)
         })
-        addBatchItem({ imgX, imgY, material, materialB64 })
+        addBatchItem({ imgX: Math.round(imgX), imgY: Math.round(imgY), material, materialB64 })
       } catch (err) {
         console.error('Failed to load material:', err)
       }
