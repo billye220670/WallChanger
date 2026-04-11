@@ -4,3 +4,4 @@ python-dotenv>=1.1.0
 pillow>=10.0.0
 fal-client>=0.5.5
 httpx>=0.24.0
+numpy>=1.24.0
