@@ -26,13 +26,18 @@ export function FinalizingScreen() {
         materialImage: item.materialB64,
       }))
 
+      console.log('[FinalizingScreen] Starting render-all, items count:', items.length)
+      console.time('[FinalizingScreen] renderAll total')
+
       renderAll(originalImage!, maskImages, items)
         .then((result) => {
+          console.timeEnd('[FinalizingScreen] renderAll total')
           setFinalImage(result.finalImage)
           clearBatchItems()
           setPhase('done')
         })
         .catch((err) => {
+          console.timeEnd('[FinalizingScreen] renderAll total')
           console.error('Batch render-all failed:', err)
           setPhase('editing')
         })

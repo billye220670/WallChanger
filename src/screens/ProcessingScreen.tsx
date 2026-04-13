@@ -31,6 +31,7 @@ export function ProcessingScreen() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    console.log(`[ProcessingScreen] effect triggered, originalImage exists: ${!!originalImage}`)
     setBackendUrl(backendUrl)
     if (!originalImage) return
 
@@ -38,8 +39,16 @@ export function ProcessingScreen() {
 
     async function run() {
       try {
+        console.log('[ProcessingScreen] calling preprocessImage...')
         const result = await preprocessImage(originalImage!)
         if (signal.ignore) return
+
+        console.log(`[ProcessingScreen] received response, enforcedResult length: ${result.enforcedResult?.length}, masks count: ${result.masks?.length}`)
+
+        // Validate response
+        if (!result.enforcedResult || !Array.isArray(result.masks) || result.masks.length === 0) {
+          throw new Error('Invalid preprocess response: missing enforcedResult or masks')
+        }
 
         // Build MaskInfo array: assign unique colors to each B&W mask
         const colors: [number, number, number][] = []
@@ -50,17 +59,19 @@ export function ProcessingScreen() {
         })
 
         setMasks(result.enforcedResult, result.masks, masks)
+        console.log('[ProcessingScreen] transitioning to editing phase')
         setTimeout(() => setPhase('editing'), 300)
       } catch (err) {
         if (signal.ignore) return
         console.error('Preprocessing failed:', err)
+        console.error('[ProcessingScreen] full error object:', JSON.stringify(err, Object.getOwnPropertyNames(err as object)))
         setError(err instanceof Error ? err.message : '处理失败，请重试')
       }
     }
 
     run()
     return () => { signal.ignore = true }
-  }, [])
+  }, [originalImage, backendUrl, setMasks, setPhase])
 
   return (
     <div className="fixed inset-0 bg-gray-950 flex flex-col items-center justify-center">

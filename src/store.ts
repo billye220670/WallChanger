@@ -27,7 +27,7 @@ interface AppStore extends AppState {
   reset: () => void
 }
 
-const savedBackendUrl = localStorage.getItem('backendUrl') || 'http://localhost:8100'
+const savedBackendUrl = localStorage.getItem('backendUrl') ?? ''
 
 function loadSavedPrompts(): DebugPrompts {
   try {

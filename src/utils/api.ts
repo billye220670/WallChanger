@@ -1,6 +1,6 @@
 import type { MaskInfo, Material } from '../types'
 
-let backendUrl = 'http://localhost:8100'
+let backendUrl = ''
 
 export function setBackendUrl(url: string) {
   backendUrl = url
@@ -108,11 +108,28 @@ export async function renderAll(
   masks: string[],
   items: Array<{ x: number; y: number; materialImage: string; prompt?: string }>
 ): Promise<{ finalImage: string }> {
+  // 打印数据大小（关键诊断信息）
+  const enforcedSizeMB = (enforcedImage.length / 1024 / 1024).toFixed(2)
+  const masksSizeMB = (masks.reduce((sum, m) => sum + m.length, 0) / 1024 / 1024).toFixed(2)
+  const itemsSizeMB = (items.reduce((sum, item) => sum + item.materialImage.length, 0) / 1024 / 1024).toFixed(2)
+  console.log(`[render-all] Data sizes: enforcedImage=${enforcedSizeMB}MB, masks=${masksSizeMB}MB, items=${itemsSizeMB}MB (${items.length} items)`)
+
+  // 计时 JSON.stringify
+  console.time('[render-all] JSON.stringify')
+  const bodyStr = JSON.stringify({ enforcedImage, masks, items })
+  console.timeEnd('[render-all] JSON.stringify')
+  console.log(`[render-all] Total body size: ${(bodyStr.length / 1024 / 1024).toFixed(2)}MB`)
+
+  // 计时 fetch 请求发起
+  console.time('[render-all] fetch')
+  console.log('[render-all] Starting fetch...')
   const resp = await fetch(`${backendUrl}/api/v2/render-all`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enforcedImage, masks, items }),
+    body: bodyStr,
   })
+  console.timeEnd('[render-all] fetch')
+
   if (!resp.ok) {
     const text = await resp.text()
     console.error('[render-all] error response:', resp.status, text)
