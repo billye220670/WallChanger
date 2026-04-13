@@ -103,22 +103,20 @@ export async function debugSegment(
   return data
 }
 
+/**
+ * 批量渲染 — enforcedImage、masks、items[].materialImage 均传 URL 字符串
+ */
 export async function renderAll(
   enforcedImage: string,
   masks: string[],
   items: Array<{ x: number; y: number; materialImage: string; prompt?: string }>
 ): Promise<{ finalImage: string }> {
-  // 打印数据大小（关键诊断信息）
-  const enforcedSizeMB = (enforcedImage.length / 1024 / 1024).toFixed(2)
-  const masksSizeMB = (masks.reduce((sum, m) => sum + m.length, 0) / 1024 / 1024).toFixed(2)
-  const itemsSizeMB = (items.reduce((sum, item) => sum + item.materialImage.length, 0) / 1024 / 1024).toFixed(2)
-  console.log(`[render-all] Data sizes: enforcedImage=${enforcedSizeMB}MB, masks=${masksSizeMB}MB, items=${itemsSizeMB}MB (${items.length} items)`)
+  // 打印 URL 诊断信息
+  console.log(`[render-all] enforcedImage URL: ${enforcedImage}`)
+  console.log(`[render-all] masks URLs (${masks.length}):`, masks)
+  console.log(`[render-all] items (${items.length}):`, items.map(i => ({ x: i.x, y: i.y, materialImage: i.materialImage })))
 
-  // 计时 JSON.stringify
-  console.time('[render-all] JSON.stringify')
-  const bodyStr = JSON.stringify({ enforcedImage, masks, items })
-  console.timeEnd('[render-all] JSON.stringify')
-  console.log(`[render-all] Total body size: ${(bodyStr.length / 1024 / 1024).toFixed(2)}MB`)
+  const body = { enforcedImage, masks, items }
 
   // 计时 fetch 请求发起
   console.time('[render-all] fetch')
@@ -126,7 +124,7 @@ export async function renderAll(
   const resp = await fetch(`${backendUrl}/api/v2/render-all`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: bodyStr,
+    body: JSON.stringify(body),
   })
   console.timeEnd('[render-all] fetch')
 

@@ -290,18 +290,9 @@ export function EditorScreen() {
 
     // ── Batch mode: collect data, don't render ──
     if (batchMode) {
-      try {
-        const matResp = await fetch(`${backendUrl}/materials/${material.filename}`)
-        const matBlob = await matResp.blob()
-        const materialB64 = await new Promise<string>((resolve) => {
-          const reader = new FileReader()
-          reader.onload = (e) => resolve((e.target!.result as string).split(',')[1])
-          reader.readAsDataURL(matBlob)
-        })
-        addBatchItem({ imgX: Math.round(imgX), imgY: Math.round(imgY), material, materialB64 })
-      } catch (err) {
-        console.error('Failed to load material:', err)
-      }
+      // 材质图片的 URL（相对路径）
+      const materialUrl = `/materials/${material.filename}`
+      addBatchItem({ imgX: Math.round(imgX), imgY: Math.round(imgY), material, materialUrl })
       return true
     }
 

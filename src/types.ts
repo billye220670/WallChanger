@@ -33,7 +33,24 @@ export interface BatchItem {
   imgX: number       // 相对于 enforcedImage 的像素坐标 X
   imgY: number       // 相对于 enforcedImage 的像素坐标 Y
   material: Material
-  materialB64: string  // 材质图片的 raw base64（预加载）
+  materialUrl: string  // 材质图片的 URL
+}
+
+/**
+ * 判断字符串是 URL 还是 base64，返回可用于 img.src 的字符串。
+ * - 如果以 http://, https://, / 或 data: 开头，视为可直接使用的 URL/data URI
+ * - 否则视为 raw base64，自动添加 data:image/png;base64, 前缀
+ */
+export function toImgSrc(value: string): string {
+  if (
+    value.startsWith('http://') ||
+    value.startsWith('https://') ||
+    value.startsWith('/') ||
+    value.startsWith('data:')
+  ) {
+    return value
+  }
+  return `data:image/png;base64,${value}`
 }
 
 export interface AppState {

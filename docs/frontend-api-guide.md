@@ -442,12 +442,12 @@ const data = await res.json();
 
 | 字段 | 类型 | 必须 | 说明 |
 |------|------|------|------|
-| `enforcedImage` | `string` | ✅ | preprocess 返回的 `enforcedResult`，raw base64 PNG |
-| `masks` | `string[]` | ✅ | preprocess 返回的 `masks[]` 黑白蒙版数组，每个元素为 raw base64 PNG |
+| `enforcedImage` | `string` | ✅ | preprocess 返回的 `enforcedResult`，URL 字符串 |
+| `masks` | `string[]` | ✅ | preprocess 返回的 `masks[]` 黑白蒙版数组，每个元素为 URL 字符串 |
 | `items` | `array` | ✅ | 要替换的区域列表，不能为空 |
 | `items[].x` | `number` | ✅ | 用户点击位置 X 坐标（相对于 enforcedImage 的像素坐标） |
 | `items[].y` | `number` | ✅ | 用户点击位置 Y 坐标 |
-| `items[].materialImage` | `string` | ✅ | 材质参考图，raw base64 |
+| `items[].materialImage` | `string` | ✅ | 材质参考图，URL 字符串（如 `/materials/mat (1).png`） |
 | `items[].prompt` | `string` | 否 | 该区域的替换提示词（预留字段），默认 `"based on image 2, change all wall material in image 1."` |
 
 #### 请求示例
@@ -463,12 +463,12 @@ const res = await fetch(`${API_BASE}/api/v2/render-all`, {
       {
         x: 320,
         y: 240,
-        materialImage: material1Base64,
+        materialImage: '/materials/mat (1).png',
       },
       {
         x: 800,
         y: 150,
-        materialImage: material2Base64,
+        materialImage: '/materials/mat (2).png',
       },
     ],
   }),
@@ -481,22 +481,22 @@ const data = await res.json();
 
 ```json
 {
-  "enforcedImage": "<preprocess返回的enforcedResult, raw base64 PNG>",
+  "enforcedImage": "<preprocess返回的enforcedResult, URL 字符串>",
   "masks": [
-    "<第1面墙的B&W蒙版 base64>",
-    "<第2面墙的B&W蒙版 base64>"
+    "<第1面墙的B&W蒙版 URL>",
+    "<第2面墙的B&W蒙版 URL>"
   ],
   "items": [
     {
       "x": 320,
       "y": 240,
-      "materialImage": "<材质参考图 base64>",
+      "materialImage": "/materials/mat (1).png",
       "prompt": "based on image 2, change all wall material in image 1."
     },
     {
       "x": 800,
       "y": 150,
-      "materialImage": "<另一材质参考图 base64>"
+      "materialImage": "/materials/mat (2).png"
     }
   ]
 }
@@ -727,7 +727,7 @@ interface RenderAllItem {
   x: number;
   /** 用户点击位置 Y 坐标（像素坐标） */
   y: number;
-  /** 材质参考图 base64 */
+  /** 材质参考图 URL */
   materialImage: string;
   /** 该区域的替换提示词（可选） */
   prompt?: string;
@@ -969,7 +969,7 @@ async function fullWorkflow(imageFile: File) {
 async function handleRenderAll(
   enforcedResult: string,
   masks: string[],
-  assignments: Array<{ x: number; y: number; materialBase64: string }>
+  assignments: Array<{ x: number; y: number; materialUrl: string }>
 ) {
   const response = await fetch(`${API_BASE}/api/v2/render-all`, {
     method: 'POST',
@@ -980,7 +980,7 @@ async function handleRenderAll(
       items: assignments.map(a => ({
         x: a.x,
         y: a.y,
-        materialImage: a.materialBase64,
+        materialImage: a.materialUrl,
       })),
     }),
   });

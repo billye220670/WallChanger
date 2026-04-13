@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useStore } from '../store'
 import { preprocessImage, setBackendUrl } from '../utils/api'
 import type { MaskInfo } from '../types'
+import { toImgSrc } from '../types'
 
 function generateUniqueColor(existing: [number, number, number][]): [number, number, number] {
   const MIN_DIST_SQ = 80 * 80
@@ -79,8 +80,9 @@ export function ProcessingScreen() {
       {originalImage && (
         <div className="absolute inset-0">
           <img
-            src={`data:image/jpeg;base64,${originalImage}`}
+            src={toImgSrc(originalImage)}
             className="w-full h-full object-cover opacity-30"
+            crossOrigin="anonymous"
             alt=""
           />
           <div className="absolute inset-0 bg-gray-950/60" />

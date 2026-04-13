@@ -734,8 +734,20 @@ export function loadMaskIntoOffscreen(maskBase64: string): Promise<void> {
       offscreenCtx!.drawImage(img, 0, 0, offscreenCanvas!.width, offscreenCanvas!.height)
       resolve()
     }
-    img.src = `data:image/png;base64,${maskBase64}`
+    img.crossOrigin = 'anonymous'
+    img.src = _toImgSrc(maskBase64)
   })
+}
+
+/** URL / base64 自适应转换 */
+function _toImgSrc(value: string): string {
+  if (
+    value.startsWith('http://') ||
+    value.startsWith('https://') ||
+    value.startsWith('/') ||
+    value.startsWith('data:')
+  ) return value
+  return `data:image/png;base64,${value}`
 }
 
 /**
@@ -764,7 +776,8 @@ export function loadBWMasksIntoOffscreen(
         resolve(canvas)
       }
       img.onerror = () => resolve(canvas)  // empty canvas on error
-      img.src = `data:image/png;base64,${b64}`
+      img.crossOrigin = 'anonymous'
+      img.src = _toImgSrc(b64)
     })
   })
 

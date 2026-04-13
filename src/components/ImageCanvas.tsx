@@ -1,6 +1,7 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle } from 'react'
 import { useStore } from '../store'
 import { initOffscreenCanvas, loadMaskIntoOffscreen, loadBWMasksIntoOffscreen } from '../utils/canvas'
+import { toImgSrc } from '../types'
 
 export interface ImageCanvasHandle {
   getCanvas: () => HTMLCanvasElement | null
@@ -65,7 +66,8 @@ export const ImageCanvas = forwardRef<ImageCanvasHandle, ImageCanvasProps>(
         }
         onReady()
       }
-      img.src = `data:image/octet-stream;base64,${originalImage}`
+      img.crossOrigin = 'anonymous'
+      img.src = toImgSrc(originalImage)
     }, [originalImage, refinedMask, rawMask, maskImages])
 
     useEffect(() => {

@@ -23,7 +23,7 @@ export function FinalizingScreen() {
       const items = batchItems.map(item => ({
         x: item.imgX,
         y: item.imgY,
-        materialImage: item.materialB64,
+        materialImage: item.materialUrl,
       }))
 
       console.log('[FinalizingScreen] Starting render-all, items count:', items.length)
