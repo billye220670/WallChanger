@@ -32,7 +32,19 @@ export async function preprocessImage(
     throw new Error(`Preprocess failed: ${resp.status} — ${text}`)
   }
   const data = await resp.json()
-  console.log('[preprocess] success: masks count =', data.masks?.length)
+  console.log('[preprocess] === DEBUG START ===')
+  console.log('[preprocess] response keys:', Object.keys(data))
+  console.log('[preprocess] masks count:', data.masks?.length ?? 'NO masks field')
+  console.log('[preprocess] masks type:', typeof data.masks, Array.isArray(data.masks) ? '(array)' : '(not array)')
+  console.log('[preprocess] enforcedResult exists:', !!data.enforcedResult, 'length:', data.enforcedResult?.length ?? 0)
+  if (Array.isArray(data.masks)) {
+    data.masks.forEach((m: string, i: number) => {
+      console.log(`[preprocess] mask[${i}] type=${typeof m}, length=${m?.length ?? 0}, preview=${String(m).substring(0, 80)}...`)
+    })
+  } else {
+    console.warn('[preprocess] WARNING: masks is not an array!', data.masks)
+  }
+  console.log('[preprocess] === DEBUG END ===')
   return data
 }
 

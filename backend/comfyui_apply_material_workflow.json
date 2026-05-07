@@ -268,7 +268,7 @@
   },
   "501:491": {
     "inputs": {
-      "text": "将图一的墙面换成图二的材质样式",
+      "text": "Replace the wall surface in the first image with the material from the second image. Extract and replicate the exact surface texture, color, roughness, and bump details from the reference material. Map the material completely flat onto the wall area, adjusting texture scale and tiling to match realistic proportions of a real-world interior wall. Ignore all black masked regions.",
       "嵌入提示词": null,
       "clip": [
         "501:490",

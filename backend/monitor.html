@@ -1,0 +1,1358 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>WallChanger Monitor</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:#0f172a;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,monospace;overflow:hidden;height:100vh;display:flex;flex-direction:column}
+#header{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1px solid #334155;flex-shrink:0}
+#header h1{font-size:18px;font-weight:600;letter-spacing:1px;color:#f1f5f9}
+.header-right{display:flex;align-items:center;gap:16px}
+.status-badge{display:flex;align-items:center;gap:6px;font-size:13px;color:#94a3b8}
+.status-dot{width:10px;height:10px;border-radius:50%;background:#ef4444;transition:background .3s}
+.status-dot.connected{background:#22c55e;box-shadow:0 0 6px #22c55e80}
+#reqId{font-size:13px;color:#64748b;font-family:monospace}
+.btn{padding:6px 14px;border:1px solid #475569;border-radius:6px;background:transparent;color:#94a3b8;cursor:pointer;font-size:12px;transition:all .2s}
+.btn:hover{background:#1e293b;color:#f1f5f9;border-color:#64748b}
+
+/* === System stats === */
+#sys-stats{display:flex;align-items:center;gap:10px;font-size:12px;font-family:'Cascadia Code','Fira Code',monospace;color:#64748b}
+.stat-item{display:flex;align-items:center;gap:4px}
+.stat-label{color:#64748b}
+.stat-val{color:#94a3b8;font-weight:600;min-width:32px;text-align:right}
+.stat-sep{color:#334155}
+
+/* === Layout === */
+#main-layout{display:flex;flex:1;overflow:hidden}
+
+/* === Sidebar === */
+#sidebar{width:220px;min-width:220px;background:#1e293b;border-right:1px solid #334155;display:flex;flex-direction:column;overflow:hidden}
+#sidebar-header{padding:14px 16px 10px;border-bottom:1px solid #334155;font-size:14px;font-weight:600;color:#94a3b8;letter-spacing:1px}
+#task-list{flex:1;overflow-y:auto;padding:6px 0}
+#task-list::-webkit-scrollbar{width:4px}
+#task-list::-webkit-scrollbar-thumb{background:#475569;border-radius:2px}
+
+.task-item{position:relative;padding:10px 14px 10px 18px;cursor:pointer;border-left:3px solid transparent;transition:background .15s}
+.task-item:hover{background:#2d3a4d}
+/* Selected state */
+.task-item.selected{background:#475569}
+/* Running state */
+.task-item.status-running{border-left-color:#3b82f6;background:#334155;animation:taskPulse 2.5s ease-in-out infinite}
+.task-item.status-running.selected{background:#475569;animation:taskPulseSelected 2.5s ease-in-out infinite}
+/* Idle state (waiting for next request) */
+.task-item.status-idle{border-left-color:#f59e0b;background:#1e293b}
+.task-item.status-idle.selected{background:#475569}
+/* Completed state */
+.task-item.status-completed{border-left-color:#22c55e}
+/* Error state */
+.task-item.status-error{border-left-color:#ef4444}
+
+@keyframes taskPulse{0%,100%{background:#334155}50%{background:#2a3a50}}
+@keyframes taskPulseSelected{0%,100%{background:#475569}50%{background:#3f5070}}
+
+.task-name{font-size:13px;color:#e2e8f0;font-family:'Cascadia Code','Fira Code',monospace;font-weight:500}
+.task-meta{font-size:11px;color:#64748b;margin-top:2px;display:flex;align-items:center;gap:6px}
+.task-meta .task-status-text{white-space:nowrap}
+.task-meta .task-status-text.running{color:#3b82f6}
+.task-meta .task-status-text.idle{color:#f59e0b}
+.task-meta .task-status-text.completed{color:#22c55e}
+.task-meta .task-status-text.error{color:#ef4444}
+.task-dur{font-size:11px;font-family:'Cascadia Code','Fira Code',monospace}
+.task-dur.running{color:#93c5fd;font-weight:600}
+.task-dur.idle{color:#f59e0b}
+.task-dur.completed{color:#64748b}
+.task-dur.error{color:#64748b}
+
+#sidebar-empty{padding:24px 16px;text-align:center;color:#475569;font-size:12px}
+
+/* === Right panel === */
+#right-panel{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#timeline-container{padding:24px;overflow:auto;flex:1}
+.phase-block{background:#1e293b;border-radius:12px;padding:20px 28px 24px;margin-bottom:20px;position:relative;overflow-x:auto}
+.phase-title{font-size:22px;font-weight:700;letter-spacing:2px;color:#475569;margin-bottom:18px;text-transform:uppercase}
+.phase-title.done{color:#22c55e}
+.phase-title.active{color:#3b82f6}
+
+.timeline-row{display:flex;align-items:flex-end;gap:0;min-height:140px;padding-bottom:8px}
+.node-wrapper{display:flex;flex-direction:column;align-items:center;min-width:110px;position:relative}
+.node-thumb{width:80px;height:80px;border-radius:8px;object-fit:cover;cursor:pointer;border:2px solid #334155;margin-bottom:6px;opacity:0;transition:opacity .3s}
+.node-thumb.loaded{opacity:1}
+.node-thumb-placeholder{width:80px;height:80px;margin-bottom:6px}
+.node-dot-row{display:flex;align-items:center;width:100%;height:14px}
+.node-line-seg{flex:1;height:2px;background:transparent}
+.node-line-seg.pending{background:#334155}
+.node-line-seg.done{background:#22c55e}
+.node-line-seg.active{background:#3b82f6;background:repeating-linear-gradient(90deg,#3b82f6 0,#3b82f6 6px,transparent 6px,transparent 12px);animation:dash 1s linear infinite;background-size:12px 2px}
+.node-dot{width:14px;height:14px;border-radius:50%;background:#475569;flex-shrink:0;transition:background .3s;position:relative;z-index:2}
+.node-dot.done{background:#22c55e;box-shadow:0 0 6px #22c55e60}
+.node-dot.active{background:#3b82f6;animation:pulse 1.2s ease-in-out infinite}
+.node-dot.error{background:#ef4444;box-shadow:0 0 6px #ef444460}
+.node-dot.warning{background:#f59e0b;box-shadow:0 0 6px #f59e0b60}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 #3b82f680}50%{box-shadow:0 0 0 8px #3b82f620}}
+.node-label{font-size:11px;color:#94a3b8;margin-top:6px;text-align:center;white-space:nowrap;max-width:100px;overflow:hidden;text-overflow:ellipsis;min-height:1em}
+.node-time{font-size:12px;font-weight:600;margin-top:2px;color:#64748b;font-family:monospace;min-height:1em}
+.node-time.done{color:#22c55e}
+.node-time.active{color:#3b82f6}
+.node-time.error{color:#ef4444}
+.node-time.warning{color:#f59e0b}
+.node-msg{font-size:10px;margin-top:2px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;cursor:default;min-height:1em}
+.node-msg.warning{color:#f59e0b}
+.node-msg.error{color:#ef4444}
+
+@keyframes dash{to{background-position:12px 0}}
+
+#log-panel{border-top:1px solid #334155;flex-shrink:0}
+#log-toggle{display:flex;align-items:center;justify-content:space-between;padding:12px 24px;cursor:pointer;user-select:none}
+#log-toggle:hover{background:#1e293b}
+#log-toggle span{font-size:13px;color:#64748b;letter-spacing:1px}
+#log-toggle .arrow{transition:transform .2s}
+#log-toggle .arrow.open{transform:rotate(180deg)}
+#log-body{max-height:0;overflow:hidden;transition:max-height .3s ease;background:#1e293b}
+#log-body.open{max-height:400px;overflow-y:auto}
+#log-content{padding:12px 24px;font-size:12px;font-family:'Cascadia Code','Fira Code',monospace;color:#94a3b8;white-space:pre-wrap;word-break:break-all}
+.log-entry{padding:4px 0;border-bottom:1px solid #0f172a}
+
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;z-index:1000;cursor:pointer;opacity:0;pointer-events:none;transition:opacity .2s}
+.modal-overlay.show{opacity:1;pointer-events:auto}
+.modal-overlay img{max-width:90vw;max-height:90vh;border-radius:8px;box-shadow:0 0 40px #00000080}
+
+
+/* Debug modal (coordinate map) */
+.debug-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.9);display:flex;align-items:center;justify-content:center;z-index:1100;opacity:0;pointer-events:none;transition:opacity .2s}
+.debug-modal-overlay.show{opacity:1;pointer-events:auto}
+.debug-modal-box{background:#1e293b;border-radius:12px;padding:24px;max-width:90vw;max-height:90vh;display:flex;gap:20px;overflow:auto;cursor:default;box-shadow:0 0 60px #00000080}
+.debug-modal-left{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center}
+.debug-modal-left img{max-width:100%;max-height:70vh;border-radius:8px;object-fit:contain}
+.debug-modal-left .debug-modal-title{font-size:14px;color:#e2e8f0;margin-bottom:10px;font-weight:600}
+.debug-modal-right{width:220px;min-width:200px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;max-height:80vh}
+.debug-mat-card{background:#0f172a;border-radius:8px;padding:10px;display:flex;flex-direction:column;align-items:center;gap:6px}
+.debug-mat-card img{width:100%;max-height:120px;object-fit:contain;border-radius:4px}
+.debug-mat-info{font-size:11px;color:#94a3b8;text-align:center}
+.debug-mat-info .matched{color:#22c55e}
+.debug-mat-info .unmatched{color:#ef4444}
+.debug-modal-close{position:absolute;top:16px;right:24px;font-size:24px;color:#64748b;cursor:pointer;z-index:1200;transition:color .15s}
+.debug-modal-close:hover{color:#e2e8f0}
+
+/* === Watchdog panel === */
+#watchdog-badge{display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;padding:4px 10px;border:1px solid #334155;border-radius:6px;transition:all .2s}
+#watchdog-badge:hover{background:#1e293b;border-color:#64748b}
+#watchdog-badge .wd-dot{width:8px;height:8px;border-radius:50%;background:#64748b;flex-shrink:0;transition:background .3s}
+#watchdog-badge .wd-dot.healthy{background:#22c55e;box-shadow:0 0 6px #22c55e80}
+#watchdog-badge .wd-dot.unhealthy{background:#ef4444;box-shadow:0 0 6px #ef444480}
+#watchdog-badge .wd-dot.restarting{background:#3b82f6;animation:pulse 1.2s ease-in-out infinite}
+#watchdog-badge .wd-dot.cooldown{background:#f59e0b;box-shadow:0 0 6px #f59e0b80}
+#watchdog-badge .wd-dot.unknown{background:#64748b}
+#wd-popup{position:fixed;top:60px;right:120px;width:340px;background:#1e293b;border:1px solid #334155;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.6);z-index:800;display:none;padding:16px;font-size:12px}
+#wd-popup.show{display:block}
+#wd-popup h3{font-size:14px;font-weight:600;color:#e2e8f0;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.wd-row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #0f172a}
+.wd-row .wd-label{color:#64748b}
+.wd-row .wd-val{color:#e2e8f0;font-family:'Cascadia Code','Fira Code',monospace;font-weight:500}
+.wd-row .wd-val.healthy{color:#22c55e}
+.wd-row .wd-val.unhealthy{color:#ef4444}
+.wd-row .wd-val.restarting{color:#3b82f6}
+.wd-row .wd-val.cooldown{color:#f59e0b}
+.wd-row .wd-val.unknown{color:#64748b}
+#wd-restart-btn{margin-top:12px;width:100%;padding:8px;border:1px solid #475569;border-radius:6px;background:transparent;color:#94a3b8;cursor:pointer;font-size:12px;transition:all .2s}
+#wd-restart-btn:hover{background:#ef444420;color:#ef4444;border-color:#ef4444}
+#wd-restart-btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* === Settings panel === */
+#settings-btn{padding:6px 14px;border:1px solid #475569;border-radius:6px;background:transparent;color:#94a3b8;cursor:pointer;font-size:12px;transition:all .2s}
+#settings-btn:hover{background:#1e293b;color:#f1f5f9;border-color:#64748b}
+#settings-btn.active{background:#3b82f6;color:#fff;border-color:#3b82f6}
+#settings-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:900;opacity:0;pointer-events:none;transition:opacity .2s;display:flex;align-items:center;justify-content:center}
+#settings-overlay.show{opacity:1;pointer-events:auto}
+#settings-panel{background:#1e293b;border-radius:12px;width:680px;max-width:90vw;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 0 60px #00000080}
+#settings-header{display:flex;align-items:center;justify-content:space-between;padding:18px 24px 14px;border-bottom:1px solid #334155}
+#settings-header h2{font-size:16px;font-weight:600;color:#e2e8f0;letter-spacing:1px}
+.settings-header-actions{display:flex;gap:8px}
+.settings-action-btn{padding:5px 12px;border:1px solid #475569;border-radius:6px;background:transparent;color:#94a3b8;cursor:pointer;font-size:11px;transition:all .15s}
+.settings-action-btn:hover{background:#334155;color:#f1f5f9}
+.settings-action-btn.reset{border-color:#ef4444;color:#ef4444}
+.settings-action-btn.reset:hover{background:#ef444420}
+#settings-body{flex:1;overflow-y:auto;padding:16px 24px 20px}
+.prompt-field{margin-bottom:16px}
+.prompt-field:last-child{margin-bottom:0}
+.prompt-label{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.prompt-label-text{font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:1px}
+.prompt-label-key{font-size:10px;color:#475569;font-family:'Cascadia Code','Fira Code',monospace}
+.prompt-textarea{width:100%;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;color:#e2e8f0;font-size:12px;font-family:'Cascadia Code','Fira Code',monospace;resize:vertical;min-height:40px;line-height:1.5;transition:border-color .15s}
+.prompt-textarea:focus{outline:none;border-color:#3b82f6}
+.prompt-textarea.modified{border-color:#f59e0b}
+.prompt-saved-indicator{font-size:10px;color:#22c55e;opacity:0;transition:opacity .3s;margin-left:auto}
+.prompt-saved-indicator.show{opacity:1}
+</style>
+</head>
+<body>
+
+<div id="header">
+  <h1>WallChanger 处理监控</h1>
+  <div class="header-right">
+    <div id="sys-stats">
+      <span class="stat-item"><span class="stat-label">CPU</span><span class="stat-val" id="statCpu">-</span></span>
+      <span class="stat-sep">|</span>
+      <span class="stat-item"><span class="stat-label">GPU</span><span class="stat-val" id="statGpu">-</span></span>
+      <span class="stat-sep">|</span>
+      <span class="stat-item"><span class="stat-label">RAM</span><span class="stat-val" id="statRam">-</span></span>
+      <span class="stat-sep">|</span>
+      <span class="stat-item"><span class="stat-label">VRAM</span><span class="stat-val" id="statVram">-</span></span>
+    </div>
+    <div id="watchdog-badge" onclick="toggleWatchdog()" title="ComfyUI 看门狗状态">
+      <span class="wd-dot" id="wdDot"></span>
+      <span id="wdLabel">ComfyUI</span>
+    </div>
+    <span id="reqId">--</span>
+    <span class="status-badge"><span class="status-dot" id="statusDot"></span><span id="statusText">未连接</span></span>
+    <button class="btn" onclick="clearAll()">清空</button>
+    <button id="settings-btn" onclick="toggleSettings()">⚙ 设置</button>
+  </div>
+</div>
+
+<div id="main-layout">
+  <div id="sidebar">
+    <div id="sidebar-header">任务历史</div>
+    <div id="task-list">
+      <div id="sidebar-empty">暂无任务</div>
+    </div>
+  </div>
+  <div id="right-panel">
+    <div id="timeline-container"></div>
+    <div id="log-panel">
+      <div id="log-toggle" onclick="toggleLog()">
+        <span>EVENT LOG</span>
+        <span class="arrow" id="logArrow">▼</span>
+      </div>
+      <div id="log-body">
+        <div id="log-content"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="task-preview" style="
+  position: fixed;
+  display: none;
+  z-index: 1000;
+  pointer-events: none;
+  border: 2px solid #334155;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #1e293b;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+">
+  <img id="task-preview-img" style="display:block; max-width:300px; max-height:200px; object-fit:contain;" />
+</div>
+
+<div class="modal-overlay" id="modal" onclick="closeModal()">
+  <img id="modalImg" src="">
+</div>
+
+<div class="debug-modal-overlay" id="debugModal" onclick="closeDebugModal(event)">
+  <span class="debug-modal-close" onclick="closeDebugModal(event)">&times;</span>
+  <div class="debug-modal-box" onclick="event.stopPropagation()">
+    <div class="debug-modal-left">
+      <div class="debug-modal-title">坐标匹配调试图</div>
+      <img id="debugCoordImg" src="">
+    </div>
+    <div class="debug-modal-right" id="debugMatList"></div>
+  </div>
+</div>
+
+<div id="wd-popup">
+  <h3>🐕 ComfyUI 看门狗</h3>
+  <div class="wd-row"><span class="wd-label">状态</span><span class="wd-val" id="wdStatus">等待中...</span></div>
+  <div class="wd-row"><span class="wd-label">连续失败</span><span class="wd-val" id="wdFailures">0</span></div>
+  <div class="wd-row"><span class="wd-label">上次检查</span><span class="wd-val" id="wdLastCheck">等待中...</span></div>
+  <div class="wd-row"><span class="wd-label">上次健康</span><span class="wd-val" id="wdLastHealthy">等待中...</span></div>
+  <div class="wd-row"><span class="wd-label">重启次数</span><span class="wd-val" id="wdRestarts">0</span></div>
+  <div class="wd-row"><span class="wd-label">自动重启</span><span class="wd-val" id="wdAutoRestart">等待中...</span></div>
+  <div class="wd-row"><span class="wd-label">最后错误</span><span class="wd-val" id="wdLastError" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="">等待中...</span></div>
+  <button id="wd-restart-btn" onclick="manualRestart()">🔄 手动重启 ComfyUI</button>
+</div>
+
+<div id="settings-overlay" onclick="closeSettings(event)">
+  <div id="settings-panel" onclick="event.stopPropagation()">
+    <div id="settings-header">
+      <h2>⚙ 提示词设置</h2>
+      <div class="settings-header-actions">
+        <span id="settings-saved" class="prompt-saved-indicator">✓ 已保存</span>
+        <button class="settings-action-btn reset" onclick="resetPrompts()">恢复默认</button>
+        <button class="settings-action-btn" onclick="closeSettings()">&times; 关闭</button>
+      </div>
+    </div>
+    <div id="settings-body"></div>
+  </div>
+</div>
+
+<script>
+const API_BASE = window.location.origin;
+const STREAM_URL = API_BASE + '/api/monitor/stream';
+const STATE_URL = API_BASE + '/api/monitor/state';
+const TASK_URL = API_BASE + '/api/monitor/task/';
+const DEBUG_IMG = API_BASE + '/api/monitor/debug/';
+const PROMPTS_URL = API_BASE + '/api/monitor/prompts';
+const SYSSTATS_URL = API_BASE + '/api/monitor/system-stats';
+
+const container = document.getElementById('timeline-container');
+const logContent = document.getElementById('log-content');
+const statusDot = document.getElementById('statusDot');
+const statusText = document.getElementById('statusText');
+const reqIdEl = document.getElementById('reqId');
+const modal = document.getElementById('modal');
+const modalImg = document.getElementById('modalImg');
+const logArrow = document.getElementById('logArrow');
+const logBody = document.getElementById('log-body');
+const taskListEl = document.getElementById('task-list');
+const sidebarEmpty = document.getElementById('sidebar-empty');
+const statCpu = document.getElementById('statCpu');
+const statGpu = document.getElementById('statGpu');
+const statRam = document.getElementById('statRam');
+const statVram = document.getElementById('statVram');
+
+let phases = {};
+let currentRequestId = null;
+let evtSource = null;
+let reconnectTimer = null;
+
+// Track the current active node per phase to enforce single-active rule
+let activeNodeByPhase = {};
+
+// === Task sidebar state ===
+let taskMap = {};       // taskId -> { id, startTime, status, events[], el, timerInterval, lastEventTime, ... }
+let selectedTaskId = null;
+let latestTaskId = null;
+
+const PHASE_ORDER = ['preprocess', 'render-all'];
+
+const PREPROCESS_STAGES = [
+  { stage: 'preprocess_请求开始', label: '请求开始' },
+  { stage: '图片下载(URL)', label: '图片下载' },
+  { stage: '图片接收', label: '图片接收' },
+  { stage: 'EXIF修正', label: 'EXIF修正' },
+  { stage: 'ComfyUI上传', label: 'ComfyUI上传' },
+  { stage: 'ComfyUI提交工作流', label: '提交工作流' },
+  { stage: 'ComfyUI执行', label: 'ComfyUI执行' },
+  { stage: '结果下载', label: '结果下载' },
+  { stage: '调试保存', label: '调试保存' },
+  { stage: 'base64编码', label: 'Base64编码' },
+];
+
+const RENDERALL_STAGES = [
+  { stage: 'renderall_请求开始', label: '请求开始' },
+  { stage: '解码蒙版', label: '解码蒙版' },
+  { stage: '坐标匹配', label: '坐标匹配' },
+  { stage: '区域渲染', label: '区域渲染' },
+  { stage: 'Alpha合成', label: 'Alpha合成' },
+  { stage: 'Finalize上传', label: 'Finalize上传' },
+  { stage: 'Finalize提交工作流', label: 'Finalize提交' },
+  { stage: 'Finalize执行', label: 'Finalize执行' },
+  { stage: 'Finalize结果下载', label: '结果下载' },
+  { stage: '调试保存', label: '调试保存' },
+  { stage: 'base64编码', label: 'Base64编码' },
+];
+
+const STAGE_DEFS = {
+  'preprocess': PREPROCESS_STAGES,
+  'render-all': RENDERALL_STAGES,
+};
+
+// === Time formatting ===
+function formatTaskTime(unixTs) {
+  const d = new Date(unixTs * 1000);
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const time = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  if (d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()) {
+    return time;
+  }
+  return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + time;
+}
+
+// === Sidebar task management ===
+function ensureTask(taskId, startTime) {
+  if (taskMap[taskId]) return taskMap[taskId];
+  const task = { id: taskId, startTime: startTime || Date.now()/1000, localStartTime: Date.now(), status: 'running', events: [], el: null, timerInterval: null, lastEventTime: null };
+  taskMap[taskId] = task;
+
+  // Create sidebar item
+  const item = document.createElement('div');
+  item.className = 'task-item status-running';
+  item.dataset.taskId = taskId;
+
+  const nameEl = document.createElement('div');
+  nameEl.className = 'task-name';
+  nameEl.textContent = formatTaskTime(task.startTime);
+  item.appendChild(nameEl);
+
+  const metaEl = document.createElement('div');
+  metaEl.className = 'task-meta';
+  const statusEl = document.createElement('span');
+  statusEl.className = 'task-status-text running';
+  statusEl.textContent = '运行中';
+  metaEl.appendChild(statusEl);
+  const durEl = document.createElement('span');
+  durEl.className = 'task-dur running';
+  durEl.textContent = '0.0s';
+  metaEl.appendChild(durEl);
+  item.appendChild(metaEl);
+
+  item.onclick = () => selectTask(taskId);
+
+  // Hover preview
+  item.addEventListener('mouseenter', () => {
+    const preview = document.getElementById('task-preview');
+    const img = document.getElementById('task-preview-img');
+    img.src = DEBUG_IMG + taskId + '/original_input.png';
+    img.onload = () => { preview.style.display = 'block'; };
+    img.onerror = () => { preview.style.display = 'none'; };
+    const rect = item.getBoundingClientRect();
+    preview.style.left = (rect.right + 10) + 'px';
+    preview.style.top = rect.top + 'px';
+    // Don't show until image loads
+    preview.style.display = 'none';
+  });
+  item.addEventListener('mouseleave', () => {
+    const preview = document.getElementById('task-preview');
+    preview.style.display = 'none';
+    const img = document.getElementById('task-preview-img');
+    img.onload = null;
+    img.onerror = null;
+  });
+
+  // Newest task on top
+  taskListEl.insertBefore(item, taskListEl.firstChild);
+  task.el = item;
+  task._statusEl = statusEl;
+  task._durEl = durEl;
+
+  sidebarEmpty.style.display = 'none';
+  latestTaskId = taskId;
+
+  // Start live timer for running tasks (use local client time to avoid clock skew)
+  task.timerInterval = setInterval(() => {
+    if (task.status !== 'running') return;
+    const elapsed = (Date.now() - task.localStartTime) / 1000;
+    task._durEl.textContent = elapsed.toFixed(1) + 's';
+  }, 100);
+
+  return task;
+}
+
+function updateTaskSidebarStatus(taskId, status) {
+  const task = taskMap[taskId];
+  if (!task) return;
+  task.status = status;
+
+  // Update CSS classes (preserve selected state)
+  const isSelected = task.id === selectedTaskId;
+  task.el.className = 'task-item status-' + status + (isSelected ? ' selected' : '');
+
+  if (status === 'completed') {
+    task._statusEl.className = 'task-status-text completed';
+    task._statusEl.textContent = '已完成';
+    task._durEl.className = 'task-dur completed';
+    clearInterval(task.timerInterval);
+    task.timerInterval = null;
+    if (task.lastEventTime && task.startTime) {
+      task._durEl.textContent = (task.lastEventTime - task.startTime).toFixed(1) + 's';
+    }
+  } else if (status === 'idle') {
+    task._statusEl.className = 'task-status-text idle';
+    task._statusEl.textContent = '预处理完成，等待渲染';
+    task._durEl.className = 'task-dur idle';
+    clearInterval(task.timerInterval);
+    task.timerInterval = null;
+    // Show static elapsed time (stop counting)
+    if (task.lastEventTime && task.startTime) {
+      task._durEl.textContent = (task.lastEventTime - task.startTime).toFixed(1) + 's';
+    }
+  } else if (status === 'error') {
+    task._statusEl.className = 'task-status-text error';
+    task._statusEl.textContent = '失败';
+    task._durEl.className = 'task-dur error';
+    clearInterval(task.timerInterval);
+    task.timerInterval = null;
+    if (task.lastEventTime && task.startTime) {
+      task._durEl.textContent = (task.lastEventTime - task.startTime).toFixed(1) + 's';
+    }
+  } else if (status === 'running') {
+    task._statusEl.className = 'task-status-text running';
+    task._statusEl.textContent = '运行中';
+    task._durEl.className = 'task-dur running';
+    // Restart live timer if not already running (use local client time)
+    if (!task.timerInterval) {
+      task.timerInterval = setInterval(() => {
+        if (task.status !== 'running') return;
+        const elapsed = (Date.now() - task.localStartTime) / 1000;
+        task._durEl.textContent = elapsed.toFixed(1) + 's';
+      }, 100);
+    }
+  }
+}
+
+function selectTask(taskId) {
+  if (selectedTaskId === taskId) return;
+  // Deselect previous
+  if (selectedTaskId && taskMap[selectedTaskId] && taskMap[selectedTaskId].el) {
+    taskMap[selectedTaskId].el.classList.remove('selected');
+  }
+  selectedTaskId = taskId;
+  if (taskMap[taskId] && taskMap[taskId].el) {
+    taskMap[taskId].el.classList.add('selected');
+  }
+  // Rebuild timeline from this task's events
+  rebuildTimelineForTask(taskId);
+}
+
+function rebuildTimelineForTask(taskId) {
+  const task = taskMap[taskId];
+  if (!task) return;
+  // Stop all existing node timers
+  for (const phaseName of PHASE_ORDER) {
+    const p = phases[phaseName];
+    if (!p) continue;
+    for (const sn of p.nodeOrder) {
+      const nd = p.nodes[sn];
+      if (nd) clearInterval(nd.timer);
+    }
+  }
+  container.innerHTML = '';
+  phases = {};
+  activeNodeByPhase = {};
+  currentRequestId = null;
+  reqIdEl.textContent = '--';
+  for (const phaseName of PHASE_ORDER) {
+    createPhase(phaseName, STAGE_DEFS[phaseName]);
+  }
+  // Replay all events
+  for (const evt of task.events) {
+    applyEventToTimeline(evt);
+  }
+}
+
+// === Clear all ===
+async function clearAll() {
+  try { await fetch(API_BASE + '/api/monitor/history', { method: 'DELETE' }); } catch(e) { console.log('Failed to clear history', e); }
+  for (const tid of Object.keys(taskMap)) {
+    clearInterval(taskMap[tid].timerInterval);
+  }
+  for (const phaseName of PHASE_ORDER) {
+    const p = phases[phaseName];
+    if (!p) continue;
+    for (const sn of p.nodeOrder) {
+      const nd = p.nodes[sn];
+      if (nd) clearInterval(nd.timer);
+    }
+  }
+  taskMap = {};
+  selectedTaskId = null;
+  latestTaskId = null;
+  currentRequestId = null;
+  reqIdEl.textContent = '--';
+  taskListEl.innerHTML = '';
+  sidebarEmpty.style.display = '';
+  taskListEl.appendChild(sidebarEmpty);
+  container.innerHTML = '';
+  phases = {};
+  activeNodeByPhase = {};
+  for (const phaseName of PHASE_ORDER) {
+    createPhase(phaseName, STAGE_DEFS[phaseName]);
+  }
+}
+
+function toggleLog() {
+  logBody.classList.toggle('open');
+  logArrow.classList.toggle('open');
+}
+
+function addLog(evt) {
+  const entry = document.createElement('div');
+  entry.className = 'log-entry';
+  entry.textContent = JSON.stringify(evt, null, 2);
+  logContent.insertBefore(entry, logContent.firstChild);
+  while (logContent.children.length > 200) logContent.removeChild(logContent.lastChild);
+}
+
+function isPhaseStage(stage) {
+  return stage === 'preprocess' || stage === 'render-all';
+}
+
+// === Phase & node creation ===
+function createPhase(phaseName, stageDefs) {
+  const block = document.createElement('div');
+  block.className = 'phase-block';
+  const title = document.createElement('div');
+  title.className = 'phase-title';
+  title.textContent = phaseName;
+  block.appendChild(title);
+  const row = document.createElement('div');
+  row.className = 'timeline-row';
+  block.appendChild(row);
+  container.appendChild(block);
+  const phaseData = { el: block, titleEl: title, rowEl: row, nodes: {}, nodeOrder: [], done: false };
+  phases[phaseName] = phaseData;
+  for (const def of stageDefs) {
+    createNode(phaseName, def.stage, def.label);
+  }
+  rebuildConnectors(phaseName);
+  return phaseData;
+}
+
+function createNode(phaseName, stageName, labelText) {
+  const p = phases[phaseName];
+  if (!p || p.nodes[stageName]) return p ? p.nodes[stageName] : null;
+  const wrapper = document.createElement('div');
+  wrapper.className = 'node-wrapper';
+  const thumbPh = document.createElement('div');
+  thumbPh.className = 'node-thumb-placeholder';
+  wrapper.appendChild(thumbPh);
+  const dotRow = document.createElement('div');
+  dotRow.className = 'node-dot-row';
+  const leftSeg = document.createElement('div');
+  leftSeg.className = 'node-line-seg';
+  dotRow.appendChild(leftSeg);
+  const dot = document.createElement('div');
+  dot.className = 'node-dot';
+  dotRow.appendChild(dot);
+  const rightSeg = document.createElement('div');
+  rightSeg.className = 'node-line-seg';
+  dotRow.appendChild(rightSeg);
+  wrapper.appendChild(dotRow);
+  const label = document.createElement('div');
+  label.className = 'node-label';
+  label.textContent = labelText || stageName;
+  label.title = stageName;
+  wrapper.appendChild(label);
+  const timeEl = document.createElement('div');
+  timeEl.className = 'node-time';
+  wrapper.appendChild(timeEl);
+  p.rowEl.appendChild(wrapper);
+  const msgEl = document.createElement('div');
+  msgEl.className = 'node-msg';
+  msgEl.style.display = 'none';
+  wrapper.appendChild(msgEl);
+  const node = { el: wrapper, dotEl: dot, timeEl, msgEl, thumbPlaceholder: thumbPh, thumbEl: null, timer: null, startTs: null, connSegs: null, rightSeg, leftSeg, status: 'pending', warnings: [] };
+  p.nodes[stageName] = node;
+  p.nodeOrder.push(stageName);
+  return node;
+}
+
+function rebuildConnectors(phaseName) {
+  const p = phases[phaseName];
+  if (!p) return;
+  // 过滤出可见节点，跳过 display:none 的隐藏节点
+  const visibleOrder = p.nodeOrder.filter(stageName => {
+    const node = p.nodes[stageName];
+    return node && node.el && node.el.style.display !== 'none';
+  });
+  for (let i = 0; i < visibleOrder.length; i++) {
+    const node = p.nodes[visibleOrder[i]];
+    if (i === 0) {
+      node.connSegs = null;
+      node.leftSeg.className = 'node-line-seg';
+      node.rightSeg.className = visibleOrder.length > 1 ? 'node-line-seg pending' : 'node-line-seg';
+    } else {
+      const prevNode = p.nodes[visibleOrder[i - 1]];
+      node.connSegs = { prevRight: prevNode.rightSeg, curLeft: node.leftSeg };
+      setConnState(node.connSegs, 'pending');
+      node.rightSeg.className = i < visibleOrder.length - 1 ? 'node-line-seg pending' : 'node-line-seg';
+    }
+  }
+}
+
+function setConnState(connSegs, state) {
+  if (!connSegs) return;
+  const cls = 'node-line-seg' + (state === 'done' ? ' done' : state === 'active' ? ' active' : state === 'pending' ? ' pending' : '');
+  if (connSegs.prevRight) connSegs.prevRight.className = cls;
+  if (connSegs.curLeft) connSegs.curLeft.className = cls;
+}
+
+function insertDynamicNode(phaseName, stageName, labelText) {
+  const p = phases[phaseName];
+  if (!p || p.nodes[stageName]) return p ? p.nodes[stageName] : null;
+  const anchorStage = '区域渲染';
+  let insertIdx = p.nodeOrder.indexOf(anchorStage);
+  if (insertIdx === -1) return null;
+  let lastDynIdx = insertIdx;
+  for (let i = insertIdx + 1; i < p.nodeOrder.length; i++) {
+    if (p.nodeOrder[i].startsWith('区域渲染#')) lastDynIdx = i;
+    else break;
+  }
+  insertIdx = lastDynIdx + 1;
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'node-wrapper';
+  const thumbPh = document.createElement('div');
+  thumbPh.className = 'node-thumb-placeholder';
+  wrapper.appendChild(thumbPh);
+  const dotRow = document.createElement('div');
+  dotRow.className = 'node-dot-row';
+  const leftSeg = document.createElement('div');
+  leftSeg.className = 'node-line-seg';
+  dotRow.appendChild(leftSeg);
+  const dot = document.createElement('div');
+  dot.className = 'node-dot';
+  dotRow.appendChild(dot);
+  const rightSeg = document.createElement('div');
+  rightSeg.className = 'node-line-seg';
+  dotRow.appendChild(rightSeg);
+  wrapper.appendChild(dotRow);
+  const label = document.createElement('div');
+  label.className = 'node-label';
+  label.textContent = labelText || stageName;
+  label.title = stageName;
+  wrapper.appendChild(label);
+  const timeEl = document.createElement('div');
+  timeEl.className = 'node-time';
+  wrapper.appendChild(timeEl);
+
+  const msgEl = document.createElement('div');
+  msgEl.className = 'node-msg';
+  msgEl.style.display = 'none';
+  wrapper.appendChild(msgEl);
+
+  const nextStageName = p.nodeOrder[insertIdx];
+  const nextNode = nextStageName ? p.nodes[nextStageName] : null;
+  if (nextNode) p.rowEl.insertBefore(wrapper, nextNode.el);
+  else p.rowEl.appendChild(wrapper);
+  const node = { el: wrapper, dotEl: dot, timeEl, msgEl, thumbPlaceholder: thumbPh, thumbEl: null, timer: null, startTs: null, connSegs: null, rightSeg, leftSeg, status: 'pending', warnings: [] };
+  p.nodes[stageName] = node;
+  p.nodeOrder.splice(insertIdx, 0, stageName);
+  rebuildConnectors(phaseName);
+  // 隐藏静态"区域渲染"锚点节点
+  const anchorNode = p.nodes[anchorStage];
+  if (anchorNode && anchorNode.el) {
+    anchorNode.el.style.display = 'none';
+  }
+  return node;
+}
+
+// Build a lookup: stage name -> phase name (using STAGE_DEFS)
+// For stages that appear in multiple phases, stores an array
+const STAGE_PHASE_MAP = {};
+for (const phaseName of PHASE_ORDER) {
+  const defs = STAGE_DEFS[phaseName];
+  if (!defs) continue;
+  for (const d of defs) {
+    if (!STAGE_PHASE_MAP[d.stage]) STAGE_PHASE_MAP[d.stage] = [];
+    STAGE_PHASE_MAP[d.stage].push(phaseName);
+  }
+}
+
+function resolveStage(stage, endpoint) {
+  // Dynamic region nodes always go to render-all
+  if (stage.startsWith('区域渲染#')) {
+    return { phase: 'render-all', key: stage, isDynamic: true, label: stage };
+  }
+  // If endpoint is provided, use it directly for phase routing
+  if (endpoint && STAGE_DEFS[endpoint]) {
+    const defs = STAGE_DEFS[endpoint];
+    for (const d of defs) {
+      if (d.stage === stage) return { phase: endpoint, key: stage, isDynamic: false };
+    }
+    // Stage not in this endpoint's known stages -> ignore it
+    return null;
+  }
+  // Fallback: no endpoint, try to match by stage name in STAGE_DEFS
+  const phases = STAGE_PHASE_MAP[stage];
+  if (phases && phases.length > 0) {
+    return { phase: phases[0], key: stage, isDynamic: false };
+  }
+  return null;
+}
+
+function setNodeActive(phase, stageName, startTs) {
+  const p = phases[phase];
+  if (!p) return;
+  const node = p.nodes[stageName];
+  if (!node) return;
+
+  // Determine the phase key for tracking (map phase-stage nodes to their phase)
+  const phaseKey = phase;
+
+  // Deactivate the previous active node in this phase (enforce single-active rule)
+  const prevKey = activeNodeByPhase[phaseKey];
+  if (prevKey && prevKey !== stageName) {
+    const prevNode = p.nodes[prevKey];
+    if (prevNode && prevNode.status === 'active') {
+      clearInterval(prevNode.timer);
+      prevNode.timer = null;
+      prevNode.status = 'done';
+      prevNode.dotEl.className = 'node-dot done';
+      prevNode.timeEl.className = 'node-time done';
+      // Calculate elapsed time for the previous node
+      if (prevNode.localStartMs) {
+        const elapsed = (Date.now() - prevNode.localStartMs) / 1000;
+        prevNode.timeEl.textContent = elapsed.toFixed(2) + 's';
+      } else {
+        prevNode.timeEl.textContent = '';
+      }
+      setConnState(prevNode.connSegs, 'done');
+    }
+  }
+  activeNodeByPhase[phaseKey] = stageName;
+
+  node.status = 'active';
+  node.dotEl.className = 'node-dot active';
+  node.timeEl.className = 'node-time active';
+  // Use local client time for live timer to avoid server/client clock skew
+  node.localStartMs = Date.now();
+  setConnState(node.connSegs, 'active');
+  clearInterval(node.timer);
+  node.timer = setInterval(() => {
+    const elapsed = (Date.now() - node.localStartMs) / 1000;
+    node.timeEl.textContent = elapsed.toFixed(1) + 's...';
+  }, 100);
+}
+
+function setNodeDone(phase, stageName, duration, imagePath, evt) {
+  const p = phases[phase];
+  if (!p) return;
+  const node = p.nodes[stageName];
+  if (!node) return;
+  node.status = 'done';
+  clearInterval(node.timer);
+  node.timer = null;
+  // Clear active tracking if this was the active node
+  if (activeNodeByPhase[phase] === stageName) {
+    activeNodeByPhase[phase] = null;
+  }
+  node.dotEl.className = 'node-dot done';
+  node.timeEl.className = 'node-time done';
+  node.timeEl.textContent = (duration != null ? duration.toFixed(2) : '0.00') + 's';
+  setConnState(node.connSegs, 'done');
+  if (imagePath) loadThumb(node, imagePath);
+}
+
+function setNodeError(phase, stageName, message) {
+  const p = phases[phase];
+  if (!p) return;
+  const node = p.nodes[stageName];
+  if (!node) return;
+  node.status = 'error';
+  clearInterval(node.timer);
+  node.dotEl.className = 'node-dot error';
+  node.timeEl.className = 'node-time error';
+  node.timeEl.textContent = 'ERROR';
+  setConnState(node.connSegs, 'pending');
+  if (message && node.msgEl) {
+    node.msgEl.textContent = message;
+    node.msgEl.title = message;
+    node.msgEl.className = 'node-msg error';
+    node.msgEl.style.display = '';
+  }
+}
+
+function setNodeWarning(phase, stageName, message) {
+  const p = phases[phase];
+  if (!p) return;
+  const node = p.nodes[stageName];
+  if (!node) return;
+  // Warning does NOT change node completion status
+  // Only attach warning message and optionally change dot if still pending
+  node.warnings.push(message);
+  if (node.status === 'pending' || node.status === 'active') {
+    node.dotEl.className = 'node-dot warning';
+    node.timeEl.className = 'node-time warning';
+  }
+  if (node.msgEl) {
+    const allWarnings = node.warnings.join('; ');
+    node.msgEl.textContent = allWarnings;
+    node.msgEl.title = allWarnings;
+    node.msgEl.className = 'node-msg warning';
+    node.msgEl.style.display = '';
+  }
+}
+
+function loadThumb(node, filename) {
+  if (!node.thumbPlaceholder && node.thumbEl) {
+    node.thumbEl.src = DEBUG_IMG + filename;
+    return;
+  }
+  const img = document.createElement('img');
+  img.className = 'node-thumb';
+  img.src = DEBUG_IMG + filename;
+  img.onload = () => img.classList.add('loaded');
+  img.onerror = () => { console.warn('Thumb load failed:', img.src); img.style.visibility = 'hidden'; };
+  img.onclick = (e) => { e.stopPropagation(); openModal(img.src); };
+  if (node.thumbPlaceholder) node.thumbPlaceholder.replaceWith(img);
+  node.thumbEl = img;
+  node.thumbPlaceholder = null;
+}
+
+function openModal(src) { modalImg.src = src; modal.classList.add('show'); }
+function closeModal() { modal.classList.remove('show'); }
+
+// === Debug modal for coordinate matching ===
+const debugModal = document.getElementById('debugModal');
+const debugCoordImg = document.getElementById('debugCoordImg');
+const debugMatList = document.getElementById('debugMatList');
+
+function openDebugModal(taskId, extra) {
+  if (!extra || !extra.debugImages) return;
+  const base = DEBUG_IMG + taskId + '/';
+  debugCoordImg.src = base + extra.debugImages.coordinateMap;
+  debugMatList.innerHTML = '';
+  const points = extra.points || [];
+  const materials = extra.debugImages.materials || [];
+  for (let i = 0; i < materials.length; i++) {
+    const card = document.createElement('div');
+    card.className = 'debug-mat-card';
+    const img = document.createElement('img');
+    img.src = base + materials[i];
+    card.appendChild(img);
+    const info = document.createElement('div');
+    info.className = 'debug-mat-info';
+    const pt = points[i];
+    if (pt) {
+      const matchCls = pt.matched ? 'matched' : 'unmatched';
+      const matchTxt = pt.matched ? '\u2713 \u5df2\u5339\u914d' : '\u2717 \u672a\u5339\u914d';
+      info.innerHTML = `#${i} (${pt.x}, ${pt.y})<br><span class="${matchCls}">${matchTxt}</span>`;
+    } else {
+      info.textContent = `#${i}`;
+    }
+    card.appendChild(info);
+    debugMatList.appendChild(card);
+  }
+  debugModal.classList.add('show');
+}
+function closeDebugModal(e) {
+  if (e) e.stopPropagation();
+  debugModal.classList.remove('show');
+}
+
+// === Apply event to timeline (pure UI, no storage) ===
+// Close all active nodes in a phase (stop timers, mark done)
+function closeAllActiveInPhase(phaseName) {
+  const p = phases[phaseName];
+  if (!p) return;
+  for (const sn of p.nodeOrder) {
+    const nd = p.nodes[sn];
+    if (nd && nd.status === 'active') {
+      clearInterval(nd.timer);
+      nd.timer = null;
+      nd.status = 'done';
+      nd.dotEl.className = 'node-dot done';
+      nd.timeEl.className = 'node-time done';
+      if (nd.localStartMs) {
+        const elapsed = (Date.now() - nd.localStartMs) / 1000;
+        nd.timeEl.textContent = elapsed.toFixed(2) + 's';
+      }
+      setConnState(nd.connSegs, 'done');
+    }
+  }
+  activeNodeByPhase[phaseName] = null;
+}
+
+function applyEventToTimeline(evt) {
+  // Skip _task_status events - they are sidebar-only, not timeline
+  if (evt.stage === '_task_status') return;
+
+  if (evt.requestId && evt.requestId !== currentRequestId) {
+    currentRequestId = evt.requestId;
+    reqIdEl.textContent = 'REQ: ' + currentRequestId;
+  }
+  const { stage, status, duration, imagePath, timestamp } = evt;
+  const endpoint = evt.endpoint || null;
+  const evtMessage = evt.message || null;
+
+  if (isPhaseStage(stage)) {
+    const p = phases[stage];
+    if (!p) return;
+    if (status === 'start') { p.done = false; p.titleEl.className = 'phase-title active'; p.titleEl.style.color = ''; }
+    else if (status === 'done') {
+      p.done = true;
+      p.titleEl.className = 'phase-title done';
+      // Close ALL active nodes in this phase
+      closeAllActiveInPhase(stage);
+    }
+    else if (status === 'error') {
+      p.titleEl.style.color = '#ef4444';
+      // Stop all active timers in this phase
+      closeAllActiveInPhase(stage);
+    }
+    // Phase-level events only control the phase title, NOT timeline nodes
+    return;
+  }
+
+  // Resolve phase and nodeKey using endpoint for accurate routing
+  let phase = null;
+  let nodeKey = stage;
+
+  if (stage.startsWith('区域渲染#')) {
+    phase = 'render-all';
+    if (phases[phase] && !phases[phase].nodes[stage]) insertDynamicNode(phase, stage, stage);
+    nodeKey = stage;
+  } else {
+    const resolved = resolveStage(stage, endpoint);
+    if (!resolved) {
+      // Stage not recognized for this endpoint -> silently ignore
+      return;
+    }
+    phase = resolved.phase;
+    nodeKey = resolved.key;
+  }
+
+  if (!phases[phase]) return;
+  // Do NOT create nodes for unknown stages; only use pre-defined nodes
+  if (!phases[phase].nodes[nodeKey]) return;
+
+  if (status === 'start') setNodeActive(phase, nodeKey, timestamp);
+  else if (status === 'done') setNodeDone(phase, nodeKey, duration, imagePath, evt);
+  else if (status === 'error') setNodeError(phase, nodeKey, evtMessage);
+  else if (status === 'warning') setNodeWarning(phase, nodeKey, evtMessage);
+}
+
+// === Handle SSE events ===
+function handleEvent(evt) {
+  addLog(evt);
+  const taskId = evt.taskId;
+  if (!taskId) {
+    applyEventToTimeline(evt);
+    return;
+  }
+
+  const task = ensureTask(taskId, evt.timestamp);
+  task.events.push(evt);
+  if (evt.timestamp) task.lastEventTime = evt.timestamp;
+
+  // Detect task status changes from _task_status events
+  if (evt.stage === '_task_status') {
+    updateTaskSidebarStatus(taskId, evt.status);
+    // _task_status is sidebar-only, never render on timeline
+    return;
+  } else if (evt.status === 'error') {
+    updateTaskSidebarStatus(taskId, 'error');
+  }
+
+  // Auto-select: if no selection, or user is viewing latest task, follow new task
+  if (!selectedTaskId || selectedTaskId === latestTaskId || taskId === latestTaskId) {
+    if (selectedTaskId !== taskId) {
+      if (selectedTaskId && taskMap[selectedTaskId] && taskMap[selectedTaskId].el) {
+        taskMap[selectedTaskId].el.classList.remove('selected');
+      }
+      selectedTaskId = taskId;
+      if (taskMap[taskId].el) taskMap[taskId].el.classList.add('selected');
+      rebuildTimelineForTask(taskId);
+      return;
+    }
+    applyEventToTimeline(evt);
+  }
+}
+
+// === SSE connection ===
+function connect() {
+  if (evtSource) { evtSource.close(); evtSource = null; }
+  evtSource = new EventSource(STREAM_URL);
+  evtSource.onopen = () => {
+    statusDot.classList.add('connected');
+    statusText.textContent = '已连接';
+    clearTimeout(reconnectTimer);
+  };
+  evtSource.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (Array.isArray(data)) data.forEach(handleEvent);
+      else handleEvent(data);
+    } catch (err) { console.error('SSE parse error', err); }
+  };
+  evtSource.onerror = () => {
+    statusDot.classList.remove('connected');
+    statusText.textContent = '已断开';
+    evtSource.close();
+    evtSource = null;
+    reconnectTimer = setTimeout(connect, 3000);
+  };
+}
+
+async function restoreState() {
+  try {
+    const res = await fetch(STATE_URL);
+    if (!res.ok) return;
+    const state = await res.json();
+    if (state.tasks && Array.isArray(state.tasks)) {
+      for (const t of state.tasks) {
+        const task = ensureTask(t.id, t.startTime);
+        updateTaskSidebarStatus(t.id, t.status);
+        // Load events for each task
+        try {
+          const taskRes = await fetch(TASK_URL + t.id);
+          if (taskRes.ok) {
+            const taskData = await taskRes.json();
+            if (taskData.task && taskData.task.events) {
+              task.events = taskData.task.events;
+              // Update lastEventTime from events
+              if (task.events.length > 0) {
+                const lastEvt = task.events[task.events.length - 1];
+                if (lastEvt.timestamp) task.lastEventTime = lastEvt.timestamp;
+              }
+              // Update duration display
+              if (t.status !== 'running' && task.lastEventTime && task.startTime) {
+                task._durEl.textContent = (task.lastEventTime - task.startTime).toFixed(1) + 's';
+              }
+            }
+          }
+        } catch(e) { console.log('Failed to load task events for ' + t.id, e); }
+      }
+      const targetId = state.currentTaskId || (state.tasks.length > 0 ? state.tasks[state.tasks.length - 1].id : null);
+      if (targetId) {
+        selectTask(targetId);
+      }
+    }
+  } catch (e) { console.log('No existing state', e); }
+}
+
+// === System stats polling ===
+function getStatColor(pct) {
+  if (pct == null || isNaN(pct)) return '#64748b';
+  if (pct < 50) return '#22c55e';
+  if (pct < 80) return '#f59e0b';
+  return '#ef4444';
+}
+function setStatVal(el, pct) {
+  if (pct == null || isNaN(pct)) { el.textContent = '-'; el.style.color = '#64748b'; return; }
+  const rounded = Math.round(pct);
+  el.textContent = rounded + '%';
+  el.style.color = getStatColor(rounded);
+}
+async function pollSystemStats() {
+  try {
+    const res = await fetch(SYSSTATS_URL);
+    if (!res.ok) return;
+    const data = await res.json();
+    // CPU
+    if (data.cpu_percent != null) {
+      setStatVal(statCpu, data.cpu_percent);
+    } else {
+      setStatVal(statCpu, null);
+    }
+    if (data.comfyui) {
+      const sys = data.comfyui.system;
+      const devs = data.comfyui.devices;
+      // RAM (ComfyUI returns ram_total / ram_free as flat keys)
+      if (sys && sys.ram_total) {
+        const ramPct = ((sys.ram_total - sys.ram_free) / sys.ram_total * 100);
+        setStatVal(statRam, ramPct);
+      }
+      // GPU & VRAM from first CUDA device
+      if (devs && devs.length > 0) {
+        const gpu = devs[0];
+        // GPU utilization — use VRAM usage as proxy (ComfyUI doesn't expose GPU %)
+        if (gpu.vram_total) {
+          const vramPct = ((gpu.vram_total - gpu.vram_free) / gpu.vram_total * 100);
+          setStatVal(statGpu, vramPct);
+          setStatVal(statVram, vramPct);
+        }
+        // Show torch VRAM usage separately if available
+        if (gpu.torch_vram_total && gpu.torch_vram_total > 0) {
+          const torchPct = ((gpu.torch_vram_total - gpu.torch_vram_free) / gpu.torch_vram_total * 100);
+          setStatVal(statVram, torchPct);
+        }
+      }
+    }
+  } catch (e) { /* ignore */ }
+}
+
+setInterval(pollSystemStats, 1000);
+pollSystemStats();
+
+// === Watchdog polling ===
+const WATCHDOG_URL = API_BASE + '/api/monitor/comfyui-watchdog';
+const RESTART_URL = API_BASE + '/api/monitor/comfyui-restart';
+const wdDot = document.getElementById('wdDot');
+const wdLabel = document.getElementById('wdLabel');
+const wdPopup = document.getElementById('wd-popup');
+
+function fmtTs(ts) {
+  if (!ts) return '等待中...';
+  const d = new Date(ts * 1000);
+  const pad = n => String(n).padStart(2, '0');
+  return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+}
+
+const WD_STATUS_TEXT = {
+  healthy: '✅ 健康',
+  unhealthy: '❌ 无响应',
+  restarting: '🔄 重启中',
+  cooldown: '⏳ 冷却中',
+  unknown: '❓ 未知',
+};
+
+async function pollWatchdog() {
+  try {
+    const res = await fetch(WATCHDOG_URL);
+    if (!res.ok) return;
+    const d = await res.json();
+    const st = d.status || 'unknown';
+    wdDot.className = 'wd-dot ' + st;
+    wdLabel.textContent = 'ComfyUI ' + (WD_STATUS_TEXT[st] || st);
+    document.getElementById('wdStatus').textContent = WD_STATUS_TEXT[st] || st;
+    document.getElementById('wdStatus').className = 'wd-val ' + st;
+    document.getElementById('wdFailures').textContent = d.consecutive_failures + '/' + (d.config ? d.config.unhealthy_threshold : '?');
+    document.getElementById('wdLastCheck').textContent = fmtTs(d.last_check_time);
+    document.getElementById('wdLastHealthy').textContent = fmtTs(d.last_healthy_time);
+    document.getElementById('wdRestarts').textContent = d.restart_count;
+    document.getElementById('wdAutoRestart').textContent = d.enabled ? '开启' : '关闭';
+    const errEl = document.getElementById('wdLastError');
+    errEl.textContent = d.last_error || '-';
+    errEl.title = d.last_error || '';
+    const btn = document.getElementById('wd-restart-btn');
+    btn.disabled = (st === 'restarting' || st === 'cooldown');
+  } catch (e) { /* ignore */ }
+}
+
+function toggleWatchdog() {
+  wdPopup.classList.toggle('show');
+}
+
+// Close popup when clicking outside
+document.addEventListener('click', function(e) {
+  if (!wdPopup.contains(e.target) && !document.getElementById('watchdog-badge').contains(e.target)) {
+    wdPopup.classList.remove('show');
+  }
+});
+
+async function manualRestart() {
+  if (!confirm('确定要手动重启 ComfyUI 吗？')) return;
+  const btn = document.getElementById('wd-restart-btn');
+  btn.disabled = true;
+  btn.textContent = '重启中...';
+  try {
+    const res = await fetch(RESTART_URL, { method: 'POST' });
+    const data = await res.json();
+    btn.textContent = data.message || '已发送';
+    setTimeout(() => { btn.textContent = '🔄 手动重启 ComfyUI'; btn.disabled = false; }, 3000);
+  } catch (e) {
+    btn.textContent = '重启失败';
+    setTimeout(() => { btn.textContent = '🔄 手动重启 ComfyUI'; btn.disabled = false; }, 3000);
+  }
+}
+
+setInterval(pollWatchdog, 5000);
+pollWatchdog();
+
+// === Init ===
+function initTimeline() {
+  for (const phaseName of PHASE_ORDER) {
+    createPhase(phaseName, STAGE_DEFS[phaseName]);
+  }
+}
+
+initTimeline();
+restoreState().then(connect);
+
+// === Settings panel (prompt editor) ===
+const PROMPT_LABELS = {
+  enhance:        { label: 'Enhance 增强',        desc: '初始图像增强提示词' },
+  clean:          { label: 'Clean 清理',          desc: '空间清理提示词' },
+  refine:         { label: 'Refine 精细化',       desc: '蓒版精细化提示词' },
+  applyMaterial:  { label: 'Apply Material 材质',desc: '应用材质提示词（Flux2通道）' },
+  finalize:       { label: 'Finalize 最终渲染',  desc: '最终渲染提示词' },
+  ceilingMaterial:{ label: '天花材质',           desc: '天花区域提示词（ComfyUI通道）' },
+  wallMaterial:   { label: '墙面材质',           desc: '墙面区域提示词（ComfyUI通道）' },
+};
+let promptData = {};
+let promptDefaults = {};
+let saveTimer = null;
+
+async function loadPrompts() {
+  try {
+    const res = await fetch(PROMPTS_URL);
+    if (!res.ok) return;
+    const data = await res.json();
+    promptData = data.prompts || {};
+    promptDefaults = data.defaults || {};
+    renderPromptFields();
+  } catch(e) { console.warn('Failed to load prompts', e); }
+}
+
+function renderPromptFields() {
+  const body = document.getElementById('settings-body');
+  body.innerHTML = '';
+  const keys = Object.keys(PROMPT_LABELS);
+  for (const key of keys) {
+    const meta = PROMPT_LABELS[key];
+    const val = promptData[key] || '';
+    const isDefault = val === (promptDefaults[key] || '');
+    const field = document.createElement('div');
+    field.className = 'prompt-field';
+    field.innerHTML = `
+      <div class="prompt-label">
+        <span class="prompt-label-text">${meta.label}</span>
+        <span class="prompt-label-key">${meta.desc}</span>
+      </div>
+    `;
+    const ta = document.createElement('textarea');
+    ta.className = 'prompt-textarea' + (isDefault ? '' : ' modified');
+    ta.value = val;
+    ta.rows = val.length > 100 ? 4 : 2;
+    ta.dataset.key = key;
+    ta.addEventListener('input', () => onPromptInput(ta));
+    field.appendChild(ta);
+    body.appendChild(field);
+  }
+}
+
+function onPromptInput(ta) {
+  const key = ta.dataset.key;
+  promptData[key] = ta.value;
+  const isDefault = ta.value === (promptDefaults[key] || '');
+  ta.className = 'prompt-textarea' + (isDefault ? '' : ' modified');
+  // Debounce save
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => savePrompts(), 600);
+}
+
+async function savePrompts() {
+  try {
+    const res = await fetch(PROMPTS_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(promptData)
+    });
+    if (res.ok) {
+      const indicator = document.getElementById('settings-saved');
+      indicator.classList.add('show');
+      setTimeout(() => indicator.classList.remove('show'), 2000);
+    }
+  } catch(e) { console.warn('Failed to save prompts', e); }
+}
+
+async function resetPrompts() {
+  if (!confirm('确定要恢复所有提示词为默认值吗？')) return;
+  promptData = { ...promptDefaults };
+  try {
+    await fetch(PROMPTS_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(promptData)
+    });
+  } catch(e) {}
+  renderPromptFields();
+  const indicator = document.getElementById('settings-saved');
+  indicator.classList.add('show');
+  setTimeout(() => indicator.classList.remove('show'), 2000);
+}
+
+function toggleSettings() {
+  const overlay = document.getElementById('settings-overlay');
+  const btn = document.getElementById('settings-btn');
+  if (overlay.classList.contains('show')) {
+    closeSettings();
+  } else {
+    loadPrompts();
+    overlay.classList.add('show');
+    btn.classList.add('active');
+  }
+}
+
+function closeSettings(e) {
+  if (e && e.target !== document.getElementById('settings-overlay')) return;
+  document.getElementById('settings-overlay').classList.remove('show');
+  document.getElementById('settings-btn').classList.remove('active');
+}
+</script>
+</body>
+</html>

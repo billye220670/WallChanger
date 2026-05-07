@@ -21,6 +21,21 @@
       "title": "保存图像"
     }
   },
+  "554": {
+    "inputs": {
+      "brightness": 1,
+      "contrast": 3,
+      "saturation": 1,
+      "image": [
+        "72",
+        0
+      ]
+    },
+    "class_type": "LayerColor: BrightnessContrastV2",
+    "_meta": {
+      "title": "图层颜色：亮度对比度 V2"
+    }
+  },
   "556": {
     "inputs": {
       "method": "wavelet",
@@ -80,7 +95,7 @@
   "527:518": {
     "inputs": {
       "pixels": [
-        "72",
+        "554",
         0
       ],
       "vae": [
@@ -113,7 +128,7 @@
   "527:520": {
     "inputs": {
       "image": [
-        "72",
+        "554",
         0
       ]
     },
@@ -145,7 +160,7 @@
   },
   "527:523": {
     "inputs": {
-      "text": "realistic render，keep original image structure, do not add or remove any object.",
+      "text": "realistic render，enhance texture, crispy image",
       "嵌入提示词": null,
       "clip": [
         "527:515",

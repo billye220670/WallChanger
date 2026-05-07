@@ -1,7 +1,7 @@
 {
   "72": {
     "inputs": {
-      "image": "original_input (1).png"
+      "image": "235751799fdc44308d9e14cf11c0d875.jpg"
     },
     "class_type": "LoadImage",
     "_meta": {
@@ -10,22 +10,9 @@
   },
   "500": {
     "inputs": {
-      "filename_prefix": "MaskWall",
+      "filename_prefix": "Mask",
       "images": [
         "553:71",
-        0
-      ]
-    },
-    "class_type": "SaveImage",
-    "_meta": {
-      "title": "保存图像"
-    }
-  },
-  "554": {
-    "inputs": {
-      "filename_prefix": "EnforcedResult",
-      "images": [
-        "556",
         0
       ]
     },
@@ -40,7 +27,7 @@
       "strength": 0.4,
       "multithread": true,
       "image_ref": [
-        "568",
+        "560",
         0
       ],
       "image_target": [
@@ -53,52 +40,59 @@
       "title": "图像调色"
     }
   },
-  "564": {
+  "557": {
     "inputs": {
-      "filename_prefix": "MaskCeiling",
+      "quality": 90,
+      "image": [
+        "556",
+        0
+      ]
+    },
+    "class_type": "KOOK_ImageCompression",
+    "_meta": {
+      "title": "高质量图片压缩"
+    }
+  },
+  "559": {
+    "inputs": {
+      "filename_prefix": "Comfyui_",
+      "save_path": "",
       "images": [
-        "562:560",
+        "557",
+        0
+      ]
+    },
+    "class_type": "KOOK_SaveJPGImage",
+    "_meta": {
+      "title": "保存JPG图像"
+    }
+  },
+  "560": {
+    "inputs": {
+      "upscale_method": "nearest-exact",
+      "megapixels": 1,
+      "resolution_steps": 1,
+      "image": [
+        "72",
+        0
+      ]
+    },
+    "class_type": "ImageScaleToTotalPixels",
+    "_meta": {
+      "title": "缩放图像（像素）"
+    }
+  },
+  "567": {
+    "inputs": {
+      "filename_prefix": "Mask",
+      "images": [
+        "566:564",
         0
       ]
     },
     "class_type": "SaveImage",
     "_meta": {
       "title": "保存图像"
-    }
-  },
-  "566": {
-    "inputs": {
-      "seed": 753756826760388
-    },
-    "class_type": "CR Seed",
-    "_meta": {
-      "title": "随机种"
-    }
-  },
-  "568": {
-    "inputs": {
-      "upscale_method": "area",
-      "largest_size": 1024,
-      "image": [
-        "72",
-        0
-      ]
-    },
-    "class_type": "ImageScaleToMaxDimension",
-    "_meta": {
-      "title": "图像缩放到最大尺寸"
-    }
-  },
-  "571": {
-    "inputs": {
-      "images": [
-        "76:2",
-        0
-      ]
-    },
-    "class_type": "PreviewImage",
-    "_meta": {
-      "title": "预览图像"
     }
   },
   "527:515": {
@@ -154,6 +148,35 @@
       "title": "VAE编码"
     }
   },
+  "527:519": {
+    "inputs": {
+      "width": [
+        "527:520",
+        0
+      ],
+      "height": [
+        "527:520",
+        1
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "空Latent图像"
+    }
+  },
+  "527:520": {
+    "inputs": {
+      "image": [
+        "527:529",
+        0
+      ]
+    },
+    "class_type": "GetImageSize+",
+    "_meta": {
+      "title": "🔧 Get Image Size"
+    }
+  },
   "527:521": {
     "inputs": {
       "conditioning": [
@@ -189,6 +212,22 @@
       "title": "CLIP文本编码"
     }
   },
+  "527:524": {
+    "inputs": {
+      "samples": [
+        "527:525",
+        0
+      ],
+      "vae": [
+        "527:522",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE解码"
+    }
+  },
   "527:526": {
     "inputs": {
       "conditioning": [
@@ -210,7 +249,7 @@
       "blur_radius": 2,
       "sigma": 1,
       "image": [
-        "568",
+        "560",
         0
       ]
     },
@@ -221,10 +260,7 @@
   },
   "527:525": {
     "inputs": {
-      "seed": [
-        "566",
-        0
-      ],
+      "seed": 42,
       "steps": 4,
       "cfg": 1,
       "sampler_name": "euler",
@@ -250,51 +286,6 @@
     "class_type": "KSampler",
     "_meta": {
       "title": "K采样器"
-    }
-  },
-  "527:519": {
-    "inputs": {
-      "width": [
-        "527:520",
-        0
-      ],
-      "height": [
-        "527:520",
-        1
-      ],
-      "batch_size": 1
-    },
-    "class_type": "EmptyLatentImage",
-    "_meta": {
-      "title": "空Latent图像"
-    }
-  },
-  "527:520": {
-    "inputs": {
-      "image": [
-        "527:529",
-        0
-      ]
-    },
-    "class_type": "GetImageSize+",
-    "_meta": {
-      "title": "🔧 Get Image Size"
-    }
-  },
-  "527:524": {
-    "inputs": {
-      "samples": [
-        "527:525",
-        0
-      ],
-      "vae": [
-        "527:522",
-        0
-      ]
-    },
-    "class_type": "VAEDecode",
-    "_meta": {
-      "title": "VAE解码"
     }
   },
   "76:1": {
@@ -448,10 +439,7 @@
   },
   "76:10": {
     "inputs": {
-      "seed": [
-        "566",
-        0
-      ],
+      "seed": 42,
       "steps": 2,
       "cfg": 1,
       "sampler_name": "euler",
@@ -471,6 +459,185 @@
       ],
       "latent_image": [
         "76:6",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "K采样器"
+    }
+  },
+  "544:532": {
+    "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "hunyuan_image",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "加载CLIP"
+    }
+  },
+  "544:533": {
+    "inputs": {
+      "unet_name": "flux-2-klein\\Flux2-Klein-9B-True-v2-fp8mixed.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "UNet加载器"
+    }
+  },
+  "544:534": {
+    "inputs": {
+      "conditioning": [
+        "544:540",
+        0
+      ],
+      "latent": [
+        "544:535",
+        0
+      ]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "参考Latent"
+    }
+  },
+  "544:535": {
+    "inputs": {
+      "pixels": [
+        "76:2",
+        0
+      ],
+      "vae": [
+        "544:539",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE编码"
+    }
+  },
+  "544:536": {
+    "inputs": {
+      "width": [
+        "544:537",
+        0
+      ],
+      "height": [
+        "544:537",
+        1
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "空Latent图像"
+    }
+  },
+  "544:537": {
+    "inputs": {
+      "image": [
+        "76:2",
+        0
+      ]
+    },
+    "class_type": "GetImageSize+",
+    "_meta": {
+      "title": "🔧 Get Image Size"
+    }
+  },
+  "544:538": {
+    "inputs": {
+      "conditioning": [
+        "544:540",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "条件零化"
+    }
+  },
+  "544:539": {
+    "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "加载VAE"
+    }
+  },
+  "544:540": {
+    "inputs": {
+      "text": "no shadow, plain lighting, flat surface, flat color",
+      "嵌入提示词": null,
+      "clip": [
+        "544:532",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP文本编码"
+    }
+  },
+  "544:541": {
+    "inputs": {
+      "samples": [
+        "544:543",
+        0
+      ],
+      "vae": [
+        "544:539",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE解码"
+    }
+  },
+  "544:542": {
+    "inputs": {
+      "conditioning": [
+        "544:538",
+        0
+      ],
+      "latent": [
+        "544:535",
+        0
+      ]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "参考Latent"
+    }
+  },
+  "544:543": {
+    "inputs": {
+      "seed": 42,
+      "steps": 2,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "544:533",
+        0
+      ],
+      "positive": [
+        "544:534",
+        0
+      ],
+      "negative": [
+        "544:542",
+        0
+      ],
+      "latent_image": [
+        "544:536",
         0
       ]
     },
@@ -542,10 +709,10 @@
   },
   "553:67": {
     "inputs": {
-      "prompt": "walls",
+      "prompt": "wall",
       "frame_index": 0,
       "object_id": 1,
-      "score_threshold_detection": 0.36,
+      "score_threshold_detection": 0.3,
       "new_det_thresh": 0.7,
       "propagation_direction": "both",
       "start_frame_index": 0,
@@ -557,7 +724,7 @@
         0
       ],
       "video_frames": [
-        "76:2",
+        "544:541",
         0
       ],
       "extra_config": [
@@ -570,7 +737,7 @@
       "title": "SAM3 视频分割"
     }
   },
-  "562:557": {
+  "566:561": {
     "inputs": {
       "model": "sam3-fp16.safetensors",
       "segmentor": "video",
@@ -582,7 +749,7 @@
       "title": "加载 SAM3 模型"
     }
   },
-  "562:558": {
+  "566:562": {
     "inputs": {
       "assoc_iou_thresh": 0,
       "det_nms_thresh": 0.1,
@@ -607,10 +774,10 @@
       "title": "SAM3 视频模型额外配置"
     }
   },
-  "562:559": {
+  "566:563": {
     "inputs": {
       "mask": [
-        "562:561",
+        "566:565",
         3
       ]
     },
@@ -619,10 +786,10 @@
       "title": "遮罩转换为图像"
     }
   },
-  "562:560": {
+  "566:564": {
     "inputs": {
       "images": [
-        "562:559",
+        "566:563",
         0
       ]
     },
@@ -631,12 +798,12 @@
       "title": "Image List To Batch ♾️Mixlab"
     }
   },
-  "562:561": {
+  "566:565": {
     "inputs": {
       "prompt": "ceiling",
       "frame_index": 0,
       "object_id": 1,
-      "score_threshold_detection": 0.5,
+      "score_threshold_detection": 0.3,
       "new_det_thresh": 0.7,
       "propagation_direction": "both",
       "start_frame_index": 0,
@@ -644,15 +811,15 @@
       "close_after_propagation": true,
       "keep_model_loaded": true,
       "sam3_model": [
-        "562:557",
+        "566:561",
         0
       ],
       "video_frames": [
-        "76:2",
+        "544:541",
         0
       ],
       "extra_config": [
-        "562:558",
+        "566:562",
         0
       ]
     },

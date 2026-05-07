@@ -68,7 +68,7 @@
   },
   "566": {
     "inputs": {
-      "seed": 753756826760388
+      "seed": 99621117814820
     },
     "class_type": "CR Seed",
     "_meta": {
@@ -87,6 +87,18 @@
     "class_type": "ImageScaleToMaxDimension",
     "_meta": {
       "title": "图像缩放到最大尺寸"
+    }
+  },
+  "569": {
+    "inputs": {
+      "images": [
+        "544:541",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "预览图像"
     }
   },
   "571": {
@@ -479,6 +491,188 @@
       "title": "K采样器"
     }
   },
+  "544:532": {
+    "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "hunyuan_image",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "加载CLIP"
+    }
+  },
+  "544:533": {
+    "inputs": {
+      "unet_name": "flux-2-klein\\Flux2-Klein-9B-True-v2-fp8mixed.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "UNet加载器"
+    }
+  },
+  "544:534": {
+    "inputs": {
+      "conditioning": [
+        "544:540",
+        0
+      ],
+      "latent": [
+        "544:535",
+        0
+      ]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "参考Latent"
+    }
+  },
+  "544:535": {
+    "inputs": {
+      "pixels": [
+        "76:2",
+        0
+      ],
+      "vae": [
+        "544:539",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE编码"
+    }
+  },
+  "544:536": {
+    "inputs": {
+      "width": [
+        "544:537",
+        0
+      ],
+      "height": [
+        "544:537",
+        1
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "空Latent图像"
+    }
+  },
+  "544:537": {
+    "inputs": {
+      "image": [
+        "76:2",
+        0
+      ]
+    },
+    "class_type": "GetImageSize+",
+    "_meta": {
+      "title": "🔧 Get Image Size"
+    }
+  },
+  "544:538": {
+    "inputs": {
+      "conditioning": [
+        "544:540",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "条件零化"
+    }
+  },
+  "544:539": {
+    "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "加载VAE"
+    }
+  },
+  "544:540": {
+    "inputs": {
+      "text": "no shadow, plain lighting, flat surface, flat color，keep clear structure and sharp boundary",
+      "嵌入提示词": null,
+      "clip": [
+        "544:532",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP文本编码"
+    }
+  },
+  "544:541": {
+    "inputs": {
+      "samples": [
+        "544:543",
+        0
+      ],
+      "vae": [
+        "544:539",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE解码"
+    }
+  },
+  "544:542": {
+    "inputs": {
+      "conditioning": [
+        "544:538",
+        0
+      ],
+      "latent": [
+        "544:535",
+        0
+      ]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "参考Latent"
+    }
+  },
+  "544:543": {
+    "inputs": {
+      "seed": [
+        "566",
+        0
+      ],
+      "steps": 2,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "544:533",
+        0
+      ],
+      "positive": [
+        "544:534",
+        0
+      ],
+      "negative": [
+        "544:542",
+        0
+      ],
+      "latent_image": [
+        "544:536",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "K采样器"
+    }
+  },
   "553:68": {
     "inputs": {
       "model": "sam3-fp16.safetensors",
@@ -545,7 +739,7 @@
       "prompt": "walls",
       "frame_index": 0,
       "object_id": 1,
-      "score_threshold_detection": 0.36,
+      "score_threshold_detection": 0.3,
       "new_det_thresh": 0.7,
       "propagation_direction": "both",
       "start_frame_index": 0,
@@ -557,7 +751,7 @@
         0
       ],
       "video_frames": [
-        "76:2",
+        "544:541",
         0
       ],
       "extra_config": [
@@ -636,7 +830,7 @@
       "prompt": "ceiling",
       "frame_index": 0,
       "object_id": 1,
-      "score_threshold_detection": 0.5,
+      "score_threshold_detection": 0.3,
       "new_det_thresh": 0.7,
       "propagation_direction": "both",
       "start_frame_index": 0,
@@ -648,7 +842,7 @@
         0
       ],
       "video_frames": [
-        "76:2",
+        "544:541",
         0
       ],
       "extra_config": [
