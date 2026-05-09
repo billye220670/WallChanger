@@ -7,6 +7,7 @@ import time
 import json
 import uuid
 import random
+import shutil
 import numpy as np
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
@@ -125,6 +126,18 @@ async def value_error_handler(request: Request, exc: ValueError):
 DEBUG_DIR = (Path(__file__).parent / "debug").resolve()
 DEBUG_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/debug-imgs", StaticFiles(directory=str(DEBUG_DIR)), name="debug_imgs")
+
+# ── Session cleanup config ───────────────────────────────────────────────────
+# 超过保留期的会话图片（蒙版 / 预处理 / 阶段性 / 最终结果）会被自动清理以节省空间
+SESSION_RETENTION_DAYS = int(os.getenv("SESSION_RETENTION_DAYS", "7"))
+SESSION_CLEANUP_INTERVAL = int(os.getenv("SESSION_CLEANUP_INTERVAL", "3600"))  # 秒
+_cleanup_task = None
+_last_cleanup_info: dict = {
+    "last_run_time": None,
+    "removed_count": 0,
+    "removed_ids": [],
+    "error": None,
+}
 
 
 # ── Monitor (SSE real-time event push) ────────────────────────────────────────
@@ -289,6 +302,90 @@ class MonitorSession:
         self._save_history()
 
 monitor = MonitorSession()
+
+
+# ── Session cleanup helpers ──────────────────────────────────────────────────
+def cleanup_old_sessions(retention_days: int | None = None) -> dict:
+    """删除 debug/<task_id>/ 下超过保留天数的子目录，并同步清理 monitor_history.json。
+
+    参考目录识别规则：
+      - 仅处理 DEBUG_DIR 的直接子目录（每个 task 一个目录）
+      - 以目录最新修改时间 mtime 为准（任务写入最后一张图后即计时）
+      - 保护当前正在运行中的任务目录，不论 mtime 多远都不删
+      - 保留非目录文件（如 monitor_history.json）
+    """
+    days = SESSION_RETENTION_DAYS if retention_days is None else retention_days
+    cutoff_time = time.time() - max(0, days) * 86400
+    removed_ids: list[str] = []
+    errors: list[str] = []
+
+    if not DEBUG_DIR.exists():
+        info = {
+            "last_run_time": time.time(),
+            "removed_count": 0,
+            "removed_ids": [],
+            "error": None,
+            "retention_days": days,
+        }
+        _last_cleanup_info.update(info)
+        return info
+
+    # 保护当前正在运行的任务（避免运行中被误杀）
+    active_id = None
+    if monitor.current_task and monitor.current_task.get("status") == "running":
+        active_id = monitor.current_task.get("id")
+
+    for entry in DEBUG_DIR.iterdir():
+        if not entry.is_dir():
+            continue
+        if active_id and entry.name == active_id:
+            continue
+        try:
+            mtime = entry.stat().st_mtime
+            if mtime < cutoff_time:
+                shutil.rmtree(entry, ignore_errors=True)
+                # 若目录仍存在（Windows 文件锁定等），记录异常
+                if entry.exists():
+                    errors.append(f"{entry.name}: still exists after rmtree")
+                else:
+                    removed_ids.append(entry.name)
+        except Exception as e:
+            errors.append(f"{entry.name}: {e}")
+
+    # 同步删除 monitor_history.json 中对应的任务记录
+    if removed_ids:
+        try:
+            removed_set = set(removed_ids)
+            monitor.tasks = [t for t in monitor.tasks if t.get("id") not in removed_set]
+            if monitor.current_task and monitor.current_task.get("id") in removed_set:
+                monitor.current_task = None
+            monitor._save_history()
+        except Exception as e:
+            errors.append(f"prune history: {e}")
+
+    info = {
+        "last_run_time": time.time(),
+        "removed_count": len(removed_ids),
+        "removed_ids": removed_ids,
+        "error": "; ".join(errors) if errors else None,
+        "retention_days": days,
+    }
+    _last_cleanup_info.update(info)
+    if removed_ids or errors:
+        print(f"[Cleanup] retention={days}d removed={len(removed_ids)} errs={len(errors)} ids={removed_ids}")
+    return info
+
+
+async def session_cleanup_loop():
+    """定时清理过期会话文件。"""
+    # 启动后延迟几秒再跑首次，让服务完全就绪
+    await asyncio.sleep(5)
+    while True:
+        try:
+            cleanup_old_sessions()
+        except Exception as e:
+            print(f"[Cleanup] loop error: {e}")
+        await asyncio.sleep(max(60, SESSION_CLEANUP_INTERVAL))
 
 
 @app.get("/monitor")
@@ -622,6 +719,17 @@ async def startup_watchdog():
     _watchdog_task = asyncio.create_task(comfyui_watchdog_loop())
 
 
+@app.on_event("startup")
+async def startup_session_cleanup():
+    """启动时启动会话文件清理循环，并立即跑一次。"""
+    global _cleanup_task
+    try:
+        cleanup_old_sessions()
+    except Exception as e:
+        print(f"[Cleanup] startup run failed: {e}")
+    _cleanup_task = asyncio.create_task(session_cleanup_loop())
+
+
 @app.on_event("shutdown")
 async def shutdown_watchdog():
     global _watchdog_task
@@ -632,6 +740,45 @@ async def shutdown_watchdog():
         except asyncio.CancelledError:
             pass
         _watchdog_task = None
+
+
+@app.on_event("shutdown")
+async def shutdown_session_cleanup():
+    global _cleanup_task
+    if _cleanup_task:
+        _cleanup_task.cancel()
+        try:
+            await _cleanup_task
+        except asyncio.CancelledError:
+            pass
+        _cleanup_task = None
+
+
+@app.get("/api/monitor/session-cleanup")
+async def get_session_cleanup_status():
+    """查看会话文件清理配置与上次执行情况。"""
+    return {
+        "retention_days": SESSION_RETENTION_DAYS,
+        "interval_seconds": SESSION_CLEANUP_INTERVAL,
+        "last_run": _last_cleanup_info,
+    }
+
+
+@app.post("/api/monitor/session-cleanup")
+async def trigger_session_cleanup(request: Request):
+    """手动触发一次会话文件清理，可传 retention_days 临时覆盖保留天数。"""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    retention = body.get("retention_days") if isinstance(body, dict) else None
+    if retention is not None:
+        try:
+            retention = int(retention)
+        except Exception:
+            raise HTTPException(status_code=400, detail="retention_days 必须为整数")
+    info = cleanup_old_sessions(retention)
+    return info
 
 
 @app.get("/api/monitor/comfyui-watchdog")
