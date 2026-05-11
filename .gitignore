@@ -1,1 +1,43 @@
-/backend/debug
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+backend/debug/
+backend/.env
+
+# ===== Node / Frontend =====
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+
+# ===== Logs =====
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+logs/
+*.log
+
+# ===== Editor / IDE =====
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+
+# ===== Qoder =====
+.qoder/review_diff.txt
+.qoder/agents/
+.qoder/skills/
+
+# ===== OS / Misc =====
+.DS_Store
+Thumbs.db
+*.lnk
